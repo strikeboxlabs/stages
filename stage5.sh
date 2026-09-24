@@ -14,7 +14,7 @@ its locked Python dependencies. Enable the server and Pi dispatcher at boot.
 Requires Debian/Kali, Python 3.12+, systemd, and internet access.
 Run stages 2–4 first to install Pi and configure its model and credentials.
 
-  --user USER     Copy Pi configuration from this stage-4 account (defaults to
+  --user USER     Run the dispatcher as this stage-4 account (defaults to
                   the sudo-invoking user, otherwise the current account).
   --host ADDRESS  IPv4 address to listen on (default: 0.0.0.0, all interfaces).
                   Use 127.0.0.1 for local access only.
@@ -22,14 +22,14 @@ Run stages 2–4 first to install Pi and configure its model and credentials.
   --dry-run       Describe actions without changing anything.
   --help          Show this help.
 
-Runs as a dedicated board system account. Data lives under /var/lib/board;
-the database uses /var/lib/board/.local/share/board/board.db.
-Reruns reuse the current checkout and data, reinstall locked dependencies,
-and replace/restart both managed services and the dispatcher configuration.
-Existing checkouts are not updated. Copy models.json, settings.json and auth.json
-from the selected user's ~/.pi/agent into Board's private Pi directory; back up
-and refresh those copies on reruns. Source credentials are never changed.
-Pi handles bootstrap, reason and explore as the board account in local mode.
+The API runs as board; its database stays in /var/lib/board/.local/share/board.
+The dispatcher runs as --user and uses that account's existing Pi configuration.
+Creates /opt/board/dispatch.yaml if absent, with 5 total worker slots, 2 projects,
+3 workers per project, and up to 3 concurrent Pi sessions. Runs are stored in
+/data/cairn-runs. Edit dispatch.yaml to customize these settings.
+Reruns preserve dispatch.yaml, the checkout, credentials and data, reinstall
+locked dependencies, and replace/restart both managed services. Existing configs
+must point to the API address selected by --host/--port.
 Starting the dispatcher also starts work on existing active projects.
 Allows the configured TCP port through local input firewall rules on each
 service start. After manually reloading a firewall, restart board.service.
@@ -70,10 +70,11 @@ if "$dry_run"; then
         'Would install dependencies from board/uv.lock and retain data in /var/lib/board.' \
         "Would enable/start board.service on $bind_host:$port and check /projects." \
         "Would allow TCP $port through local IPv4 input firewall rules on every service start." \
-        "Would copy Pi models/settings/credentials from $target_user into the board account (private copies, backed up on reruns)." \
-        'Would configure a local Pi worker for bootstrap, reason and explore with persistent sessions.' \
-        'Would verify Pi configuration offline and enable/start board-dispatcher.service after the API is healthy.' \
-        'Would preserve existing code/data and back up/replace managed configuration on reruns.'
+        "Would run the local dispatcher as $target_user using that account's existing Pi configuration." \
+        'Would create /opt/board/dispatch.yaml only if absent (5 worker slots, 2 projects, 3 concurrent Pi sessions).' \
+        'Would prepare the configured runs directory (default /data/cairn-runs) for shared API/dispatcher access.' \
+        'Would check the worker CLI and enable/start board-dispatcher.service after the API is healthy.' \
+        'Would preserve existing dispatch.yaml, code, credentials and data on reruns.'
     exit 0
 fi
 (( EUID == 0 )) || die 'Run this script with sudo.'
@@ -82,32 +83,18 @@ export PATH="/usr/local/bin:$PATH:/usr/sbin:/sbin"
 command -v pi >/dev/null || die 'Pi is not installed. Run stage3.sh first.'
 id "$target_user" >/dev/null 2>&1 || die "Unknown account: $target_user"
 target_home=$(getent passwd "$target_user" | cut -d: -f6)
-pi_source=$target_home/.pi/agent
-# Fail before stopping services if stage 4 has not configured this account.
-/usr/bin/python3 - "$pi_source" <<'PY'
-import json
-import sys
-from pathlib import Path
-
-root = Path(sys.argv[1])
-try:
-    documents = {name: json.loads((root / name).read_text())
-                 for name in ('models.json', 'settings.json', 'auth.json')}
-    if not all(isinstance(value, dict) for value in documents.values()):
-        raise ValueError('Pi configuration files must contain JSON objects')
-    settings = documents['settings.json']
-    provider, model = settings.get('defaultProvider'), settings.get('defaultModel')
-    configured = documents['models.json'].get('providers', {}).get(provider, {})
-    if not provider or not model or not any(
-        item.get('id') == model for item in configured.get('models', [])
-    ):
-        raise ValueError('default provider/model is not registered')
-    auth = documents['auth.json'].get(provider, {})
-    if auth.get('type') != 'api_key' or not auth.get('key'):
-        raise ValueError('default provider has no saved API key')
-except (OSError, ValueError, AttributeError, TypeError):
-    sys.exit('Pi configuration is missing or incomplete. Run stage4.sh for the selected --user first.')
-PY
+[[ "$target_home" =~ ^/[a-zA-Z0-9_./-]+$ && -d "$target_home" ]] || \
+    die 'The dispatcher account needs an existing home with a simple absolute path.'
+as_worker() {
+    runuser -u "$target_user" -g "$board_group" -- env -u PI_CODING_AGENT_DIR \
+        HOME="$target_home" \
+        XDG_CONFIG_HOME="$target_home/.config" \
+        XDG_CACHE_HOME="$target_home/.cache" \
+        XDG_DATA_HOME="$target_home/.local/share" \
+        XDG_STATE_HOME="$target_home/.local/state" \
+        PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin \
+        "$@"
+}
 health_host=$bind_host
 [[ "$health_host" != 0.0.0.0 ]] || health_host=127.0.0.1
 
@@ -139,7 +126,6 @@ as_board() {
         XDG_STATE_HOME=/var/lib/board/.local/state \
         UV_CACHE_DIR=/var/lib/board/.cache/uv \
         PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin \
-        PI_CODING_AGENT_DIR=/var/lib/board/.pi/agent \
         "$@"
 }
 if [[ ! -e /opt/board ]]; then
@@ -165,7 +151,7 @@ fi
 /opt/board-tools/bin/python -m pip install --disable-pip-version-check 'uv>=0.8.9,<1'
 unit=/etc/systemd/system/board.service
 dispatcher_unit=/etc/systemd/system/board-dispatcher.service
-dispatch_config=/etc/board/dispatch.yaml
+dispatch_config=/opt/board/dispatch.yaml
 for managed_unit in "$unit" "$dispatcher_unit"; do
     service=${managed_unit##*/}
     existing_unit=$(systemctl show "$service" --property=FragmentPath --value)
@@ -176,9 +162,6 @@ for managed_unit in "$unit" "$dispatcher_unit"; do
         die "An unmanaged $service already exists; refusing to overwrite it."
     fi
 done
-if [[ -e "$dispatch_config" ]] && ! grep -q '^# Managed by stage5.sh$' "$dispatch_config"; then
-    die 'An unmanaged /etc/board/dispatch.yaml already exists; refusing to overwrite it.'
-fi
 # Stop workers first, then the API, before modifying their shared environment.
 for service in board-dispatcher.service board.service; do
     if systemctl is-active --quiet "$service"; then systemctl stop "$service"; fi
@@ -188,78 +171,86 @@ as_board /opt/board-tools/bin/uv sync --frozen --no-dev \
     die 'Application dependency installation failed. Resolve the error and rerun; any previous managed instance is stopped.'
 as_board /opt/board/board/.venv/bin/board serve --help >/dev/null
 
-step 'Configuring the local Pi worker'
-pi_destination=/var/lib/board/.pi/agent
-install -d -o board -g "$board_group" -m 0700 /var/lib/board/.pi "$pi_destination"
-pi_backup=$(mktemp -d "$pi_destination/stage5-backup-XXXXXXXX")
-chown board:"$board_group" "$pi_backup"
-for name in models.json settings.json auth.json; do
-    if [[ -f "$pi_destination/$name" ]]; then
-        install -o board -g "$board_group" -m 0600 "$pi_destination/$name" "$pi_backup/$name"
-    fi
-    if [[ "$pi_source/$name" != "$pi_destination/$name" ]]; then
-        install -o board -g "$board_group" -m 0600 "$pi_source/$name" "$pi_destination/$name"
-    fi
-done
-# Verify the copied provider/model can be loaded as the service user without
-# sending a prompt or spending tokens. Do not print configuration or credentials.
-as_board /usr/bin/python3 - <<'PY'
-import json
-import os
-import subprocess
-from pathlib import Path
-
-settings = json.loads((Path(os.environ['PI_CODING_AGENT_DIR']) / 'settings.json').read_text())
-provider, model = settings['defaultProvider'], settings['defaultModel']
-result = subprocess.run([
-    'pi', '--offline', '--no-extensions', '--no-skills', '--no-prompt-templates',
-    '--no-themes', '--no-context-files', '--no-approve', '--list-models', model,
-], cwd='/var/lib/board', env=dict(os.environ, PI_OFFLINE='1'),
-   text=True, capture_output=True, timeout=60)
-if result.returncode or not any(line.split()[:2] == [provider, model]
-                                for line in result.stdout.splitlines()):
-    raise SystemExit('Pi could not load the configured model as board; check the stage-4 configuration and Pi installation.')
-print('[stage5] Pi model configuration loads successfully as board (offline check).')
-PY
-install -d -o root -g "$board_group" -m 0750 /etc/board
-if [[ -f "$dispatch_config" ]]; then cp -p "$dispatch_config" "$dispatch_config.backup"; fi
+step 'Configuring the local dispatcher'
+if [[ ! -e "$dispatch_config" ]]; then
 cat > "$dispatch_config" <<EOF
-# Managed by stage5.sh
+# Local workers reuse the selected user's installed CLIs and credentials.
+# Edit this file freely; stage5.sh preserves it on reruns.
 server: "http://$health_host:$port"
+
 runtime:
   execution: local
   worker_healthcheck: disabled
-  max_workers: 1
-  max_running_projects: 1
-  max_project_workers: 1
+  max_workers: 5
+  max_running_projects: 2
+  max_project_workers: 3
   interval: 3
   healthcheck_timeout: 15
-  prompt_group: default
+  prompt_group: "default"
+
 tasks:
   bootstrap:
     timeout: 120
     conclude_timeout: 30
   reason:
-    timeout: 45
+    timeout: 240
   explore:
     timeout: 600
     conclude_timeout: 120
+
 local:
-  evidence_root: /var/lib/board/.local/share/board/projects
+  evidence_root: "/data/cairn-runs"
   completed_action: keep
+
+# Optional environment overrides for local workers, e.g. proxies:
+# common_env:
+#   https_proxy: "http://127.0.0.1:7897"
+#   http_proxy: "http://127.0.0.1:7897"
+#   all_proxy: "http://127.0.0.1:7897"
+
 workers:
-  - name: local-pi
-    type: pi
+  - name: "local-pi"
+    type: "pi"
     task_types: [bootstrap, reason, explore]
-    max_running: 1
+    max_running: 3
     priority: 0
-    env:
-      PI_CODING_AGENT_DIR: /var/lib/board/.pi/agent
-      PI_AGENT_DIR: /var/lib/board/.local/state/board/pi
+
+  # - name: "local-codex"
+  #   type: "codex"
+  #   task_types: [explore]
+  #   max_running: 1
+  #   priority: 1
 EOF
-chown root:"$board_group" "$dispatch_config"
-chmod 0640 "$dispatch_config"
-as_board /opt/board/board/.venv/bin/board dispatch --config "$dispatch_config" --startup-healthcheck-only
+    chown "$target_user:$board_group" "$dispatch_config"
+    chmod 0640 "$dispatch_config"
+else
+    printf 'Preserving existing %s.\n' "$dispatch_config"
+fi
+# Read the same configuration used by the dispatcher so the API serves evidence
+# from the correct directory, including when an existing config is reused.
+evidence_root=$(as_worker /opt/board/board/.venv/bin/python - "$dispatch_config" "http://$health_host:$port" <<'PY'
+import re
+import sys
+from pathlib import Path
+from board.dispatcher.config import DispatchConfig
+
+config = DispatchConfig.load(Path(sys.argv[1]))
+if config.runtime.execution != 'local':
+    sys.exit('stage5.sh requires runtime.execution: local in dispatch.yaml')
+if config.server.rstrip('/') != sys.argv[2]:
+    sys.exit('dispatch.yaml server differs from --host/--port; align them before rerunning.')
+root = config.local.evidence_root or config.local.workspace_root
+if not root or not re.fullmatch(r'/[a-zA-Z0-9_./-]+', root):
+    sys.exit('Set local.evidence_root to a simple absolute path in dispatch.yaml.')
+print(root)
+PY
+)
+# The shared group and setgid directory let both service accounts access new
+# evidence/reports. Existing run contents are not recursively changed.
+install -d -o "$target_user" -g "$board_group" -m 2770 "$evidence_root"
+as_board test -r "$evidence_root"
+as_worker test -w "$evidence_root"
+as_worker /opt/board/board/.venv/bin/board dispatch --config "$dispatch_config" --startup-healthcheck-only
 
 step 'Installing the persistent Board port allowance'
 install -d -m 0755 /usr/local/libexec
@@ -343,13 +334,13 @@ Environment=XDG_DATA_HOME=/var/lib/board/.local/share
 Environment=XDG_STATE_HOME=/var/lib/board/.local/state
 Environment=UV_CACHE_DIR=/var/lib/board/.cache/uv
 Environment=PYTHONUNBUFFERED=1
-Environment=BOARD_PROJECTS_DIR=/var/lib/board/.local/share/board/projects
+Environment=BOARD_PROJECTS_DIR=$evidence_root
 ExecStartPre=+/usr/local/libexec/board-firewall $port
 ExecStart=/opt/board/board/.venv/bin/board serve --host $bind_host --port $port --no-access-log
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=30
-UMask=0027
+UMask=0007
 NoNewPrivileges=true
 PrivateTmp=true
 
@@ -369,27 +360,25 @@ StartLimitIntervalSec=0
 
 [Service]
 Type=simple
-User=board
+User=$target_user
 Group=$board_group
-WorkingDirectory=/opt/board/board
-Environment=HOME=/var/lib/board
-Environment=XDG_CONFIG_HOME=/var/lib/board/.config
-Environment=XDG_CACHE_HOME=/var/lib/board/.cache
-Environment=XDG_DATA_HOME=/var/lib/board/.local/share
-Environment=XDG_STATE_HOME=/var/lib/board/.local/state
-Environment=UV_CACHE_DIR=/var/lib/board/.cache/uv
+WorkingDirectory=/opt/board
+Environment=HOME=$target_home
+Environment=XDG_CONFIG_HOME=$target_home/.config
+Environment=XDG_CACHE_HOME=$target_home/.cache
+Environment=XDG_DATA_HOME=$target_home/.local/share
+Environment=XDG_STATE_HOME=$target_home/.local/state
 Environment=PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
 Environment=PYTHONUNBUFFERED=1
-Environment=PI_CODING_AGENT_DIR=/var/lib/board/.pi/agent
-Environment=BOARD_PROJECTS_DIR=/var/lib/board/.local/share/board/projects
+Environment=BOARD_PROJECTS_DIR=$evidence_root
 ExecStartPre=/usr/bin/curl --noproxy * --fail --silent --show-error --output /dev/null --max-time 2 --retry 30 --retry-connrefused --retry-delay 1 --retry-max-time 60 http://$health_host:$port/projects
-ExecStart=/opt/board/board/.venv/bin/board dispatch --config /etc/board/dispatch.yaml
+ExecStart=/opt/board/board/.venv/bin/board dispatch --config /opt/board/dispatch.yaml
 Restart=on-failure
 RestartSec=5
 TimeoutStartSec=90
 TimeoutStopSec=30
 KillMode=control-group
-UMask=0077
+UMask=0007
 NoNewPrivileges=true
 PrivateTmp=true
 
