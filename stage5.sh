@@ -13,8 +13,8 @@ Clone https://github.com/strikeboxlabs/board.git into /opt/board and install
 its locked Python dependencies. Enable and start board.service at boot.
 Requires Debian/Kali, Python 3.12+, systemd, and internet access.
 
-  --host ADDRESS  IPv4 address to listen on (default: 127.0.0.1).
-                  Use 0.0.0.0 to listen on all IPv4 interfaces.
+  --host ADDRESS  IPv4 address to listen on (default: 0.0.0.0, all interfaces).
+                  Use 127.0.0.1 for local access only.
   --port PORT     TCP port (default: 8765).
   --dry-run       Describe actions without changing anything.
   --help          Show this help.
@@ -24,9 +24,11 @@ the database uses /var/lib/board/.local/share/board/board.db.
 Reruns reuse the current checkout and data, reinstall locked dependencies,
 and replace/restart the managed service. Existing checkouts are not updated.
 This stage runs the Board server, not the separate agent worker dispatcher.
+Allows the configured TCP port through local input firewall rules on each
+service start. After manually reloading a firewall, restart board.service.
 EOF
 }
-bind_host=127.0.0.1
+bind_host=0.0.0.0
 port=8765
 dry_run=false
 while (( $# )); do
@@ -54,6 +56,7 @@ if "$dry_run"; then
         'Would create the board service account and clone into /opt/board.' \
         'Would install dependencies from board/uv.lock and retain data in /var/lib/board.' \
         "Would enable/start board.service on $bind_host:$port and check /projects." \
+        "Would allow TCP $port through local IPv4 input firewall rules on every service start." \
         'Would preserve existing code on reruns; no dispatcher would be started.'
     exit 0
 fi
@@ -64,7 +67,7 @@ export PATH="/usr/local/bin:$PATH:/usr/sbin:/sbin"
 step 'Installing system dependencies'
 apt-get update || die 'Could not refresh apt indexes. Check network access and apt sources.'
 DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-    git python3 python3-venv ca-certificates curl || die 'System dependency installation failed.'
+    git python3 python3-venv ca-certificates curl nftables iptables || die 'System dependency installation failed.'
 /usr/bin/python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3,12) else 1)' || \
     die 'Board requires Python 3.12 or newer.'
 
@@ -128,6 +131,67 @@ as_board /opt/board-tools/bin/uv sync --frozen --no-dev \
     die 'Application dependency installation failed. Resolve the error and rerun; any previous managed instance is stopped.'
 as_board /opt/board/board/.venv/bin/board serve --help >/dev/null
 
+step 'Installing the persistent Board port allowance'
+install -d -m 0755 /usr/local/libexec
+firewall_helper=/usr/local/libexec/board-firewall
+if [[ -e "$firewall_helper" ]] && ! grep -q '^# Managed by stage5.sh$' "$firewall_helper"; then
+    die 'An unmanaged board-firewall helper already exists; refusing to overwrite it.'
+fi
+cat > "$firewall_helper" <<'PY'
+#!/usr/bin/python3
+# Managed by stage5.sh
+import json
+import shlex
+import subprocess
+import sys
+
+
+def run(*args, **kwargs):
+    return subprocess.run(args, check=True, text=True, **kwargs)
+
+
+port = int(sys.argv[1])
+if not 1 <= port <= 65535:
+    raise SystemExit('Invalid Board port')
+tag = 'stage5-board-port'
+ruleset = json.loads(run('/usr/sbin/nft', '-j', '-a', 'list', 'ruleset',
+                         capture_output=True).stdout)['nftables']
+commands = []
+# Accept in every IPv4 input base chain: an accept in one base chain does
+# not bypass a later base chain's drop policy. Never flush unrelated rules.
+for entry in ruleset:
+    rule = entry.get('rule', {})
+    if rule.get('comment') == tag and rule.get('family') in ('ip', 'inet'):
+        commands.append({'delete': {'rule': {key: rule[key] for key in
+                         ('family', 'table', 'chain', 'handle')}}})
+for entry in ruleset:
+    chain = entry.get('chain', {})
+    if chain.get('hook') != 'input' or chain.get('family') not in ('ip', 'inet'):
+        continue
+    rule = {key: chain[key] for key in ('family', 'table')}
+    rule.update(chain=chain['name'], comment=tag, expr=[
+        {'match': {'op': '==', 'left': {'meta': {'key': 'nfproto'}}, 'right': 'ipv4'}},
+        {'match': {'op': '==', 'left': {'payload': {'protocol': 'tcp', 'field': 'dport'}},
+                   'right': port}},
+        {'accept': None},
+    ])
+    commands.append({'insert': {'rule': rule}})
+if commands:
+    run('/usr/sbin/nft', '-j', '-f', '-', input=json.dumps({'nftables': commands}))
+
+# Legacy iptables can coexist with nftables. Remove only our own earlier
+# allowance (including a previous port), then insert the current allowance.
+legacy = '/usr/sbin/iptables-legacy'
+for line in run(legacy, '-w', '-S', 'INPUT', capture_output=True).stdout.splitlines():
+    args = shlex.split(line)
+    if '--comment' in args and args[args.index('--comment') + 1] == tag:
+        run(legacy, '-w', '-D', *args[1:])
+run(legacy, '-w', '-I', 'INPUT', '1', '-p', 'tcp', '--dport', str(port),
+    '-m', 'comment', '--comment', tag, '-j', 'ACCEPT')
+print(f'[stage5] Local IPv4 input firewall allows Board TCP port {port}.')
+PY
+chmod 0755 "$firewall_helper"
+
 step 'Installing the reboot-persistent service'
 if [[ -f "$unit" ]]; then cp -p "$unit" "$unit.backup"; fi
 cat > "$unit" <<EOF
@@ -135,7 +199,7 @@ cat > "$unit" <<EOF
 [Unit]
 Description=Strikebox Board web and API server
 Wants=network-online.target
-After=network-online.target
+After=network-online.target nftables.service ufw.service firewalld.service netfilter-persistent.service
 
 [Service]
 Type=simple
@@ -150,6 +214,7 @@ Environment=XDG_STATE_HOME=/var/lib/board/.local/state
 Environment=UV_CACHE_DIR=/var/lib/board/.cache/uv
 Environment=PYTHONUNBUFFERED=1
 Environment=BOARD_PROJECTS_DIR=/var/lib/board/.local/share/board/projects
+ExecStartPre=+/usr/local/libexec/board-firewall $port
 ExecStart=/opt/board/board/.venv/bin/board serve --host $bind_host --port $port --no-access-log
 Restart=on-failure
 RestartSec=5
@@ -186,6 +251,11 @@ fi
 systemctl is-enabled --quiet board.service || die 'Board is running but is not enabled at boot.'
 printf '\n[stage5] Board is running and enabled at boot: http://%s:%s\n' "$health_host" "$port"
 printf 'Status: sudo systemctl status board\nLogs: sudo journalctl -u board -f\n'
+if [[ "$bind_host" == 0.0.0.0 ]]; then
+    printf 'Network access: http://<Kali-IP>:%s (local access: http://127.0.0.1:%s)\n' "$port" "$port"
+    printf 'Kali network addresses: '
+    hostname -I
+fi
 if [[ "$bind_host" == 127.0.0.1 ]]; then
     printf 'From your workstation: ssh -N -L %s:127.0.0.1:%s kali@<Kali-IP>\n' "$port" "$port"
     printf 'Then open http://127.0.0.1:%s in your browser.\n' "$port"
