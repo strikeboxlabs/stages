@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Stage 5: install Strikebox Board and run its web/API server under systemd.
+# Stage 5: install Strikebox Board's server and local Pi dispatcher under systemd.
 set -Eeuo pipefail
 current_step=startup
 trap 'rc=$?; printf "Error [stage5: %s]: line %s failed (exit %s).\nResolve the error above, then rerun stage5.sh.\n" "$current_step" "$LINENO" "$rc" >&2; exit "$rc"' ERR
@@ -7,12 +7,15 @@ step() { current_step=$1; printf '\n[stage5] %s\n' "$current_step"; }
 die() { printf 'Error [stage5: %s]: %s\n' "$current_step" "$*" >&2; exit 1; }
 usage() {
     cat <<'EOF'
-Usage: sudo ./stage5.sh [--host ADDRESS] [--port PORT] [--dry-run]
+Usage: sudo ./stage5.sh [--user USER] [--host ADDRESS] [--port PORT] [--dry-run]
 
 Clone https://github.com/strikeboxlabs/board.git into /opt/board and install
-its locked Python dependencies. Enable and start board.service at boot.
+its locked Python dependencies. Enable the server and Pi dispatcher at boot.
 Requires Debian/Kali, Python 3.12+, systemd, and internet access.
+Run stages 2–4 first to install Pi and configure its model and credentials.
 
+  --user USER     Copy Pi configuration from this stage-4 account (defaults to
+                  the sudo-invoking user, otherwise the current account).
   --host ADDRESS  IPv4 address to listen on (default: 0.0.0.0, all interfaces).
                   Use 127.0.0.1 for local access only.
   --port PORT     TCP port (default: 8765).
@@ -22,26 +25,36 @@ Requires Debian/Kali, Python 3.12+, systemd, and internet access.
 Runs as a dedicated board system account. Data lives under /var/lib/board;
 the database uses /var/lib/board/.local/share/board/board.db.
 Reruns reuse the current checkout and data, reinstall locked dependencies,
-and replace/restart the managed service. Existing checkouts are not updated.
-This stage runs the Board server, not the separate agent worker dispatcher.
+and replace/restart both managed services and the dispatcher configuration.
+Existing checkouts are not updated. Copy models.json, settings.json and auth.json
+from the selected user's ~/.pi/agent into Board's private Pi directory; back up
+and refresh those copies on reruns. Source credentials are never changed.
+Pi handles bootstrap, reason and explore as the board account in local mode.
+Starting the dispatcher also starts work on existing active projects.
 Allows the configured TCP port through local input firewall rules on each
 service start. After manually reloading a firewall, restart board.service.
 EOF
 }
 bind_host=0.0.0.0
 port=8765
+target_user=${SUDO_USER:-$(id -un)}
 dry_run=false
 while (( $# )); do
     case "$1" in
         --help|-h) usage; exit 0 ;;
         --dry-run) dry_run=true; shift ;;
-        --host|--port)
+        --host|--port|--user)
             (( $# >= 2 )) || die "$1 requires a value."
-            if [[ "$1" == --host ]]; then bind_host=$2; else port=$2; fi
+            case "$1" in
+                --host) bind_host=$2 ;;
+                --port) port=$2 ;;
+                --user) target_user=$2 ;;
+            esac
             shift 2 ;;
         *) usage >&2; exit 2 ;;
     esac
 done
+[[ -n "$target_user" && "$target_user" != -* ]] || die 'Select a valid account with --user USER.'
 [[ "$port" =~ ^[0-9]{1,5}$ ]] || die 'Port must be an integer between 1 and 65535.'
 port=$((10#$port))
 (( port >= 1 && port <= 65535 )) || die 'Port must be between 1 and 65535.'
@@ -57,12 +70,46 @@ if "$dry_run"; then
         'Would install dependencies from board/uv.lock and retain data in /var/lib/board.' \
         "Would enable/start board.service on $bind_host:$port and check /projects." \
         "Would allow TCP $port through local IPv4 input firewall rules on every service start." \
-        'Would preserve existing code on reruns; no dispatcher would be started.'
+        "Would copy Pi models/settings/credentials from $target_user into the board account (private copies, backed up on reruns)." \
+        'Would configure a local Pi worker for bootstrap, reason and explore with persistent sessions.' \
+        'Would verify Pi configuration offline and enable/start board-dispatcher.service after the API is healthy.' \
+        'Would preserve existing code/data and back up/replace managed configuration on reruns.'
     exit 0
 fi
 (( EUID == 0 )) || die 'Run this script with sudo.'
 export PATH="/usr/local/bin:$PATH:/usr/sbin:/sbin"
 [[ -d /run/systemd/system ]] || die 'A running systemd system is required.'
+command -v pi >/dev/null || die 'Pi is not installed. Run stage3.sh first.'
+id "$target_user" >/dev/null 2>&1 || die "Unknown account: $target_user"
+target_home=$(getent passwd "$target_user" | cut -d: -f6)
+pi_source=$target_home/.pi/agent
+# Fail before stopping services if stage 4 has not configured this account.
+/usr/bin/python3 - "$pi_source" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+try:
+    documents = {name: json.loads((root / name).read_text())
+                 for name in ('models.json', 'settings.json', 'auth.json')}
+    if not all(isinstance(value, dict) for value in documents.values()):
+        raise ValueError('Pi configuration files must contain JSON objects')
+    settings = documents['settings.json']
+    provider, model = settings.get('defaultProvider'), settings.get('defaultModel')
+    configured = documents['models.json'].get('providers', {}).get(provider, {})
+    if not provider or not model or not any(
+        item.get('id') == model for item in configured.get('models', [])
+    ):
+        raise ValueError('default provider/model is not registered')
+    auth = documents['auth.json'].get(provider, {})
+    if auth.get('type') != 'api_key' or not auth.get('key'):
+        raise ValueError('default provider has no saved API key')
+except (OSError, ValueError, AttributeError, TypeError):
+    sys.exit('Pi configuration is missing or incomplete. Run stage4.sh for the selected --user first.')
+PY
+health_host=$bind_host
+[[ "$health_host" != 0.0.0.0 ]] || health_host=127.0.0.1
 
 step 'Installing system dependencies'
 apt-get update || die 'Could not refresh apt indexes. Check network access and apt sources.'
@@ -91,6 +138,8 @@ as_board() {
         XDG_DATA_HOME=/var/lib/board/.local/share \
         XDG_STATE_HOME=/var/lib/board/.local/state \
         UV_CACHE_DIR=/var/lib/board/.cache/uv \
+        PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin \
+        PI_CODING_AGENT_DIR=/var/lib/board/.pi/agent \
         "$@"
 }
 if [[ ! -e /opt/board ]]; then
@@ -115,21 +164,102 @@ if [[ ! -x /opt/board-tools/bin/python ]]; then
 fi
 /opt/board-tools/bin/python -m pip install --disable-pip-version-check 'uv>=0.8.9,<1'
 unit=/etc/systemd/system/board.service
-existing_unit=$(systemctl show board.service --property=FragmentPath --value)
-if [[ -n "$existing_unit" && "$existing_unit" != "$unit" ]]; then
-    die "An existing board.service is managed elsewhere ($existing_unit); refusing to replace it."
+dispatcher_unit=/etc/systemd/system/board-dispatcher.service
+dispatch_config=/etc/board/dispatch.yaml
+for managed_unit in "$unit" "$dispatcher_unit"; do
+    service=${managed_unit##*/}
+    existing_unit=$(systemctl show "$service" --property=FragmentPath --value)
+    if [[ -n "$existing_unit" && "$existing_unit" != "$managed_unit" ]]; then
+        die "An existing $service is managed elsewhere ($existing_unit); refusing to replace it."
+    fi
+    if [[ -e "$managed_unit" ]] && ! grep -q '^# Managed by stage5.sh$' "$managed_unit"; then
+        die "An unmanaged $service already exists; refusing to overwrite it."
+    fi
+done
+if [[ -e "$dispatch_config" ]] && ! grep -q '^# Managed by stage5.sh$' "$dispatch_config"; then
+    die 'An unmanaged /etc/board/dispatch.yaml already exists; refusing to overwrite it.'
 fi
-if [[ -e "$unit" ]] && ! grep -q '^# Managed by stage5.sh$' "$unit"; then
-    die 'An unmanaged board.service already exists; refusing to overwrite it.'
-fi
-# Stop an earlier managed instance before modifying its virtual environment.
-if systemctl is-active --quiet board.service; then
-    systemctl stop board.service
-fi
+# Stop workers first, then the API, before modifying their shared environment.
+for service in board-dispatcher.service board.service; do
+    if systemctl is-active --quiet "$service"; then systemctl stop "$service"; fi
+done
 as_board /opt/board-tools/bin/uv sync --frozen --no-dev \
     --project /opt/board/board --python /usr/bin/python3 || \
     die 'Application dependency installation failed. Resolve the error and rerun; any previous managed instance is stopped.'
 as_board /opt/board/board/.venv/bin/board serve --help >/dev/null
+
+step 'Configuring the local Pi worker'
+pi_destination=/var/lib/board/.pi/agent
+install -d -o board -g "$board_group" -m 0700 /var/lib/board/.pi "$pi_destination"
+pi_backup=$(mktemp -d "$pi_destination/stage5-backup-XXXXXXXX")
+chown board:"$board_group" "$pi_backup"
+for name in models.json settings.json auth.json; do
+    if [[ -f "$pi_destination/$name" ]]; then
+        install -o board -g "$board_group" -m 0600 "$pi_destination/$name" "$pi_backup/$name"
+    fi
+    if [[ "$pi_source/$name" != "$pi_destination/$name" ]]; then
+        install -o board -g "$board_group" -m 0600 "$pi_source/$name" "$pi_destination/$name"
+    fi
+done
+# Verify the copied provider/model can be loaded as the service user without
+# sending a prompt or spending tokens. Do not print configuration or credentials.
+as_board /usr/bin/python3 - <<'PY'
+import json
+import os
+import subprocess
+from pathlib import Path
+
+settings = json.loads((Path(os.environ['PI_CODING_AGENT_DIR']) / 'settings.json').read_text())
+provider, model = settings['defaultProvider'], settings['defaultModel']
+result = subprocess.run([
+    'pi', '--offline', '--no-extensions', '--no-skills', '--no-prompt-templates',
+    '--no-themes', '--no-context-files', '--no-approve', '--list-models', model,
+], cwd='/var/lib/board', env=dict(os.environ, PI_OFFLINE='1'),
+   text=True, capture_output=True, timeout=60)
+if result.returncode or not any(line.split()[:2] == [provider, model]
+                                for line in result.stdout.splitlines()):
+    raise SystemExit('Pi could not load the configured model as board; check the stage-4 configuration and Pi installation.')
+print('[stage5] Pi model configuration loads successfully as board (offline check).')
+PY
+install -d -o root -g "$board_group" -m 0750 /etc/board
+if [[ -f "$dispatch_config" ]]; then cp -p "$dispatch_config" "$dispatch_config.backup"; fi
+cat > "$dispatch_config" <<EOF
+# Managed by stage5.sh
+server: "http://$health_host:$port"
+runtime:
+  execution: local
+  worker_healthcheck: disabled
+  max_workers: 1
+  max_running_projects: 1
+  max_project_workers: 1
+  interval: 3
+  healthcheck_timeout: 15
+  prompt_group: default
+tasks:
+  bootstrap:
+    timeout: 120
+    conclude_timeout: 30
+  reason:
+    timeout: 45
+  explore:
+    timeout: 600
+    conclude_timeout: 120
+local:
+  evidence_root: /var/lib/board/.local/share/board/projects
+  completed_action: keep
+workers:
+  - name: local-pi
+    type: pi
+    task_types: [bootstrap, reason, explore]
+    max_running: 1
+    priority: 0
+    env:
+      PI_CODING_AGENT_DIR: /var/lib/board/.pi/agent
+      PI_AGENT_DIR: /var/lib/board/.local/state/board/pi
+EOF
+chown root:"$board_group" "$dispatch_config"
+chmod 0640 "$dispatch_config"
+as_board /opt/board/board/.venv/bin/board dispatch --config "$dispatch_config" --startup-healthcheck-only
 
 step 'Installing the persistent Board port allowance'
 install -d -m 0755 /usr/local/libexec
@@ -192,7 +322,7 @@ print(f'[stage5] Local IPv4 input firewall allows Board TCP port {port}.')
 PY
 chmod 0755 "$firewall_helper"
 
-step 'Installing the reboot-persistent service'
+step 'Installing the reboot-persistent services'
 if [[ -f "$unit" ]]; then cp -p "$unit" "$unit.backup"; fi
 cat > "$unit" <<EOF
 # Managed by stage5.sh
@@ -227,14 +357,52 @@ PrivateTmp=true
 WantedBy=multi-user.target
 EOF
 chmod 0644 "$unit"
-systemd-analyze verify "$unit"
+if [[ -f "$dispatcher_unit" ]]; then cp -p "$dispatcher_unit" "$dispatcher_unit.backup"; fi
+cat > "$dispatcher_unit" <<EOF
+# Managed by stage5.sh
+[Unit]
+Description=Strikebox Board local Pi worker dispatcher
+Wants=network-online.target board.service
+After=network-online.target board.service
+PartOf=board.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=board
+Group=$board_group
+WorkingDirectory=/opt/board/board
+Environment=HOME=/var/lib/board
+Environment=XDG_CONFIG_HOME=/var/lib/board/.config
+Environment=XDG_CACHE_HOME=/var/lib/board/.cache
+Environment=XDG_DATA_HOME=/var/lib/board/.local/share
+Environment=XDG_STATE_HOME=/var/lib/board/.local/state
+Environment=UV_CACHE_DIR=/var/lib/board/.cache/uv
+Environment=PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
+Environment=PYTHONUNBUFFERED=1
+Environment=PI_CODING_AGENT_DIR=/var/lib/board/.pi/agent
+Environment=BOARD_PROJECTS_DIR=/var/lib/board/.local/share/board/projects
+ExecStartPre=/usr/bin/curl --noproxy * --fail --silent --show-error --output /dev/null --max-time 2 --retry 30 --retry-connrefused --retry-delay 1 --retry-max-time 60 http://$health_host:$port/projects
+ExecStart=/opt/board/board/.venv/bin/board dispatch --config /etc/board/dispatch.yaml
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=90
+TimeoutStopSec=30
+KillMode=control-group
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target board.service
+EOF
+chmod 0644 "$dispatcher_unit"
+systemd-analyze verify "$unit" "$dispatcher_unit"
 systemctl daemon-reload
-systemctl enable board.service
+systemctl enable board.service board-dispatcher.service
 systemctl restart board.service
 
 step 'Checking service health'
-health_host=$bind_host
-[[ "$health_host" != 0.0.0.0 ]] || health_host=127.0.0.1
 healthy=false
 for (( attempt=0; attempt<30; attempt++ )); do
     if systemctl is-active --quiet board.service && \
@@ -249,8 +417,16 @@ if ! "$healthy"; then
     die 'Board did not become healthy. Inspect: sudo journalctl -u board.service -n 80 --no-pager'
 fi
 systemctl is-enabled --quiet board.service || die 'Board is running but is not enabled at boot.'
-printf '\n[stage5] Board is running and enabled at boot: http://%s:%s\n' "$health_host" "$port"
-printf 'Status: sudo systemctl status board\nLogs: sudo journalctl -u board -f\n'
+# start is idempotent if board.service already pulled in the dispatcher.
+systemctl start board-dispatcher.service
+sleep 3
+if ! systemctl is-active --quiet board-dispatcher.service; then
+    systemctl status board-dispatcher.service --no-pager >&2 || true
+    die 'Dispatcher failed to start. Inspect: sudo journalctl -u board-dispatcher.service -n 80 --no-pager'
+fi
+systemctl is-enabled --quiet board-dispatcher.service || die 'Dispatcher is not enabled at boot.'
+printf '\n[stage5] Board server and Pi dispatcher are running and enabled at boot: http://%s:%s\n' "$health_host" "$port"
+printf 'Status: sudo systemctl status board board-dispatcher\nLogs: sudo journalctl -u board -u board-dispatcher -f\n'
 if [[ "$bind_host" == 0.0.0.0 ]]; then
     printf 'Network access: http://<Kali-IP>:%s (local access: http://127.0.0.1:%s)\n' "$port" "$port"
     printf 'Kali network addresses: '
