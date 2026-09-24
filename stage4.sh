@@ -258,6 +258,8 @@ ssh-keygen -A
 install -d -m 0755 /run/sshd
 sshd -t || die 'SSH configuration is invalid; inspect the error above.'
 ssh_effective=$(sshd -T -C "user=$target_user,host=localhost,addr=127.0.0.1")
+# OpenSSH versions differ in the capitalization of effective option names.
+ssh_effective=${ssh_effective,,}
 [[ "$ssh_effective" == *'pubkeyauthentication yes'* ]] || die 'Existing SSH policy disables public-key authentication. Enable it for the target account before retrying.'
 if (( $(id -u "$target_user") == 0 )); then
     case "$(awk '$1 == "permitrootlogin" { print $2 }' <<< "$ssh_effective")" in

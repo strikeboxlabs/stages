@@ -78,7 +78,18 @@ fi
 board_group=$(id -gn board)
 install -d -o board -g "$board_group" -m 0750 /var/lib/board
 repo=https://github.com/strikeboxlabs/board.git
-as_board() { runuser -u board -- env HOME=/var/lib/board "$@"; }
+# runuser can retain the invoking account's XDG and uv paths. Keep all
+# per-user configuration and caches in the service account's home.
+as_board() {
+    runuser -u board -- env \
+        HOME=/var/lib/board \
+        XDG_CONFIG_HOME=/var/lib/board/.config \
+        XDG_CACHE_HOME=/var/lib/board/.cache \
+        XDG_DATA_HOME=/var/lib/board/.local/share \
+        XDG_STATE_HOME=/var/lib/board/.local/state \
+        UV_CACHE_DIR=/var/lib/board/.cache/uv \
+        "$@"
+}
 if [[ ! -e /opt/board ]]; then
     install -d -o board -g "$board_group" -m 0755 /opt/board
     as_board git clone "$repo" /opt/board
@@ -132,6 +143,11 @@ User=board
 Group=$board_group
 WorkingDirectory=/opt/board/board
 Environment=HOME=/var/lib/board
+Environment=XDG_CONFIG_HOME=/var/lib/board/.config
+Environment=XDG_CACHE_HOME=/var/lib/board/.cache
+Environment=XDG_DATA_HOME=/var/lib/board/.local/share
+Environment=XDG_STATE_HOME=/var/lib/board/.local/state
+Environment=UV_CACHE_DIR=/var/lib/board/.cache/uv
 Environment=PYTHONUNBUFFERED=1
 Environment=BOARD_PROJECTS_DIR=/var/lib/board/.local/share/board/projects
 ExecStart=/opt/board/board/.venv/bin/board serve --host $bind_host --port $port --no-access-log
