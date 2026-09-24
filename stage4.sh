@@ -6,11 +6,12 @@ trap 'rc=$?; printf "Error [stage4: %s]: line %s failed (exit %s).\n" "$current_
 die() { printf 'Error [stage4: %s]: %s\n' "$current_step" "$*" >&2; exit 1; }
 usage() {
     cat <<'EOF'
-Usage: sudo ./stage4.sh [--user USER] [--dry-run]
+Usage: ./stage4.sh [--user USER] [--dry-run]
 
 Configure Pi and Hermes with the same Abliteration API key and Large v2 model.
 Enable OpenSSH at boot for Hermes Desktop connections from another computer.
-Defaults to the sudo-invoking user; use --user when running directly as root.
+Run as root or via sudo. Defaults to the sudo-invoking user when present,
+otherwise the current account (including root). Override with --user.
 
 Prompts once for the API key (hidden). Generates a dedicated SSH client key
 for transfer to your workstation, or reuses the pair on reruns. The private
@@ -21,12 +22,12 @@ Run stages 2 and 3 first. Agent credentials/configuration are per-user.
 Desktop manages the headless Hermes backend over SSH when you connect.
 No graphical desktop or publicly listening Hermes service is needed.
 
-  --user USER  Account for agents and SSH (must be a non-root account).
+  --user USER  Account for agents and SSH (root is supported).
   --dry-run    Describe actions without prompting or making changes.
   --help       Show this help.
 EOF
 }
-target_user=${SUDO_USER:-${USER:-}}
+target_user=${SUDO_USER:-$(id -un)}
 dry_run=false
 while (( $# )); do
     case "$1" in
@@ -48,10 +49,9 @@ if "$dry_run"; then
         'Hermes Desktop connects over SSH and starts its backend on demand.'
     exit 0
 fi
-(( EUID == 0 )) || die 'Run with sudo; installing/enabling SSH requires root.'
-[[ -n "$target_user" && "$target_user" != root && "$target_user" != -* ]] || die 'Select a non-root account with --user USER, or run via sudo from that account.'
+(( EUID == 0 )) || die 'Run as root or with sudo; installing/enabling SSH requires root.'
+[[ -n "$target_user" && "$target_user" != -* ]] || die 'Select a valid account with --user USER.'
 id "$target_user" >/dev/null 2>&1 || die "Unknown account: $target_user"
-(( $(id -u "$target_user") != 0 )) || die "The target must be a non-root account."
 export PATH="/usr/local/bin:$PATH:/usr/sbin:/sbin"
 for tool in python3 pi hermes runuser systemctl apt-get; do
     command -v "$tool" >/dev/null || die "Missing $tool. Run stages 2 and 3 first."
@@ -259,6 +259,12 @@ install -d -m 0755 /run/sshd
 sshd -t || die 'SSH configuration is invalid; inspect the error above.'
 ssh_effective=$(sshd -T -C "user=$target_user,host=localhost,addr=127.0.0.1")
 [[ "$ssh_effective" == *'pubkeyauthentication yes'* ]] || die 'Existing SSH policy disables public-key authentication. Enable it for the target account before retrying.'
+if (( $(id -u "$target_user") == 0 )); then
+    case "$(awk '$1 == "permitrootlogin" { print $2 }' <<< "$ssh_effective")" in
+        yes|prohibit-password|without-password) ;;
+        *) die 'Existing SSH policy prevents root key login with an interactive session. Set PermitRootLogin prohibit-password or yes before retrying.' ;;
+    esac
+fi
 if [[ "$ssh_effective" != *'allowtcpforwarding yes'* && "$ssh_effective" != *'allowtcpforwarding local'* ]]; then
     die 'Existing SSH policy prevents local TCP forwarding, which Hermes Desktop needs. Enable it for the target account.'
 fi
