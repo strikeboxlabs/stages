@@ -10,13 +10,14 @@ Usage: ./stage4.sh [--user USER] [--dry-run]
 
 Configure Pi using the Abliteration API key and Large v2 model saved by stage 3.
 Enable OpenSSH at boot for Hermes Desktop connections from another computer.
-Allow TCP 22 and configured SSH ports through local IPv4 input firewall rules.
+Allow TCP 22, 8642, 9119, and configured SSH ports through local IPv4 input firewall rules.
 After manually reloading a firewall, restart hermes-ssh-firewall.service.
 Run as root or via sudo. Defaults to the sudo-invoking user when present,
 otherwise the current account (including root). Override with --user.
 
-Reuses the stage-3 API key without prompting. Generates a dedicated SSH client key
-for transfer to your workstation, or reuses the pair on reruns. The private
+Reuses the stage-3 API key without prompting. Creates ~/.ssh/id_rsa for transfer
+to your workstation, or reuses it on reruns. Copies the previous
+hermes-desktop-client key if id_rsa is absent. New keys use Ed25519. The private
 key has no passphrase for unattended use and is saved with mode 0600.
 Preserves unrelated settings and SSH keys; backs up changed agent configs.
 
@@ -51,7 +52,7 @@ if "$dry_run"; then
         'Would preserve unrelated settings/keys and back up existing agent configuration.' \
         'Would check the running Hermes backend and check/install openssh-server.' \
         'Would add the public key, generate missing SSH host keys, validate sshd, and enable/start SSH.' \
-        'Would persistently allow TCP 22 and configured SSH ports through the local IPv4 input firewall.' \
+        'Would persistently allow TCP 22, 8642, 9119, and configured SSH ports through the local IPv4 input firewall.' \
         'Hermes Desktop connects over SSH; stage 3 has already started the backend.'
     exit 0
 fi
@@ -97,7 +98,7 @@ fi
 if [[ "$ssh_effective" != *'allowtcpforwarding yes'* && "$ssh_effective" != *'allowtcpforwarding local'* ]]; then
     die 'Existing SSH policy prevents local TCP forwarding, which Hermes Desktop needs. Enable it for the target account.'
 fi
-current_step='Allowing SSH through the local firewall'
+current_step='Allowing SSH and Hermes ports through the local firewall'
 if ! command -v nft >/dev/null || ! command -v iptables-legacy >/dev/null; then
     apt-get update
     DEBIAN_FRONTEND=noninteractive apt-get install -y nftables iptables
@@ -123,9 +124,10 @@ def run(*args, **kwargs):
     return subprocess.run(args, check=True, text=True, **kwargs)
 
 
-ports = sorted({22, *(int(value) for value in sys.argv[1:])})
+ports = sorted({22, 8642, 9119, *(int(value) for value in sys.argv[1:])})
 if not all(1 <= port <= 65535 for port in ports):
-    raise SystemExit('Invalid SSH port')
+    raise SystemExit('Invalid TCP port')
+# Retain the original tag so reruns replace rules from earlier stage versions.
 tag = 'stage4-ssh-port'
 ruleset = json.loads(run('/usr/sbin/nft', '-j', '-a', 'list', 'ruleset',
                          capture_output=True).stdout)['nftables']
@@ -162,14 +164,14 @@ for line in run(legacy, '-w', '-S', 'INPUT', capture_output=True).stdout.splitli
 for port in ports:
     run(legacy, '-w', '-I', 'INPUT', '1', '-p', 'tcp', '--dport', str(port),
         '-m', 'comment', '--comment', tag, '-j', 'ACCEPT')
-print(f'[stage4] Local IPv4 input firewall allows SSH TCP ports {ports}.')
+print(f'[stage4] Local IPv4 input firewall allows SSH and Hermes TCP ports {ports}.')
 PY
 chmod 0755 "$firewall_helper"
 ssh_ports=$(awk '$1 == "port" { print $2 }' <<< "$ssh_effective" | sort -nu | tr '\n' ' ')
 cat > "$firewall_unit" <<EOF
 # Managed by stage4.sh
 [Unit]
-Description=Allow Hermes Desktop SSH connections through the local firewall
+Description=Allow SSH and Hermes ports through the local firewall
 After=nftables.service ufw.service firewalld.service netfilter-persistent.service
 Before=ssh.service
 
@@ -194,12 +196,14 @@ printf 'In Hermes Desktop: Settings > Gateways > Add connection > SSH.\n'
 printf 'SSH host: %s@<Kali-IP>; Hermes path: /usr/local/bin/hermes\n' "$target_user"
 printf 'Kali network addresses: '
 hostname -I
-printf 'Transfer %s/.ssh/hermes-desktop-client to your workstation as a PRIVATE key.\n' "$target_home"
+printf 'Transfer %s/.ssh/id_rsa to your workstation as a PRIVATE key.\n' "$target_home"
 printf 'Use an SSH config entry with IdentityFile pointing to that file, then select Test in Desktop.\n'
 printf '\nExample workstation ~/.ssh/config entry (replace <Kali-IP>):\n'
-printf 'Host kali-hermes\n    HostName <Kali-IP>\n    User %s\n    IdentityFile ~/.ssh/hermes-desktop-client\n    IdentitiesOnly yes\n' "$target_user"
-printf 'On Linux/macOS: chmod 600 ~/.ssh/hermes-desktop-client\n'
+printf 'Host kali-hermes\n    HostName <Kali-IP>\n    User %s\n    IdentityFile ~/.ssh/id_rsa\n    IdentitiesOnly yes\n' "$target_user"
+printf 'On Linux/macOS: chmod 600 ~/.ssh/id_rsa\n'
 printf 'Test from the workstation with: ssh kali-hermes\n'
 printf 'SSH normally uses TCP 22. Hermes backend default: TCP 9119, carried inside the SSH tunnel.\n'
-printf 'TCP 8642 belongs to the separate OpenAI-compatible API server; it is not needed here.\n'
+printf 'Local IPv4 firewall allows TCP 8642 and 9119, plus SSH ports.\n'
+printf 'The stage-3 backend listens on 127.0.0.1:9119; use the Desktop SSH connection.\n'
+printf 'Opening TCP 8642 does not start a service on that port.\n'
 printf 'VM NAT, external firewalls, and routing must allow SSH to this host.\n'
