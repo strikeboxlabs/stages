@@ -13,6 +13,8 @@ Clone https://github.com/strikeboxlabs/board.git into /opt/board and install
 its locked Python dependencies. Enable the server and Pi dispatcher at boot.
 Requires Debian/Kali, Python 3.12+, systemd, and internet access.
 Run stages 2–4 first to install Pi and configure its model and credentials.
+Reuse the research-library checkout and Hermes/Pi links from stage 3 (or create
+them if missing). Local workers explicitly load its skills with --no-skills kept.
 
   --user USER     Run the dispatcher as this stage-4 account (defaults to
                   the sudo-invoking user, otherwise the current account).
@@ -26,7 +28,8 @@ The API runs as board; its database stays in /var/lib/board/.local/share/board.
 The dispatcher runs as --user and uses that account's existing Pi configuration.
 Creates /opt/board/dispatch.yaml if absent, with 5 total worker slots, 2 projects,
 3 workers per project, and up to 3 concurrent Pi sessions. Runs are stored in
-/data/cairn-runs. Edit dispatch.yaml to customize these settings.
+/data/cairn-runs. Pi transcripts are stored in each project's sessions/pi folder.
+Edit dispatch.yaml to customize these settings. Keep the stage helpers together.
 Reruns preserve dispatch.yaml, the checkout, credentials and data, reinstall
 locked dependencies, and replace/restart both managed services. Existing configs
 must point to the API address selected by --host/--port.
@@ -67,6 +70,9 @@ if "$dry_run"; then
     printf '%s\n' \
         'Would install git, Python venv support, curl, CA certificates, and uv.' \
         'Would create the board service account and clone into /opt/board.' \
+        'Would clone/reuse /opt/research-library and link its skills to Hermes and Pi for the worker account.' \
+        'Would back up and patch local Pi launches with --no-skills --skill /opt/research-library/skills.' \
+        'Would preserve the session integration and store Pi transcripts in each project under sessions/pi.' \
         'Would install dependencies from board/uv.lock and retain data in /var/lib/board.' \
         "Would enable/start board.service on $bind_host:$port and check /projects." \
         "Would allow TCP $port through local IPv4 input firewall rules on every service start." \
@@ -79,6 +85,10 @@ if "$dry_run"; then
 fi
 (( EUID == 0 )) || die 'Run this script with sudo.'
 export PATH="/usr/local/bin:$PATH:/usr/sbin:/sbin"
+script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+for helper in configure-research-skills.py configure-board-skills.py configure-board-sessions.py; do
+    [[ -f "$script_dir/$helper" ]] || die "Missing $helper; keep the stage helpers together."
+done
 [[ -d /run/systemd/system ]] || die 'A running systemd system is required.'
 command -v pi >/dev/null || die 'Pi is not installed. Run stage3.sh first.'
 id "$target_user" >/dev/null 2>&1 || die "Unknown account: $target_user"
@@ -143,6 +153,13 @@ else
 fi
 [[ -f /opt/board/board/uv.lock && -f /opt/board/board/pyproject.toml ]] || \
     die 'Repository layout changed: expected board/pyproject.toml and board/uv.lock.'
+# Validate both exact adapter patches and all skill destinations before stopping services.
+/usr/bin/python3 "$script_dir/configure-board-skills.py" --board-root /opt/board
+/usr/bin/python3 "$script_dir/configure-board-sessions.py" --board-root /opt/board
+step 'Checking out and linking shared research skills'
+/usr/bin/python3 "$script_dir/configure-research-skills.py" --user "$target_user" \
+    --hermes-home "${HERMES_HOME:-$target_home/.hermes}" --apply
+as_worker test -r /opt/research-library/skills
 
 step 'Installing locked application dependencies'
 if [[ ! -x /opt/board-tools/bin/python ]]; then
@@ -170,6 +187,10 @@ as_board /opt/board-tools/bin/uv sync --frozen --no-dev \
     --project /opt/board/board --python /usr/bin/python3 || \
     die 'Application dependency installation failed. Resolve the error and rerun; any previous managed instance is stopped.'
 as_board /opt/board/board/.venv/bin/board serve --help >/dev/null
+
+step 'Configuring local Pi skills and project transcripts'
+/usr/bin/python3 "$script_dir/configure-board-skills.py" --board-root /opt/board --apply
+/usr/bin/python3 "$script_dir/configure-board-sessions.py" --board-root /opt/board --apply
 
 step 'Configuring the local dispatcher'
 if [[ ! -e "$dispatch_config" ]]; then

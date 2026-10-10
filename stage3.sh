@@ -21,6 +21,9 @@ Install Hermes as the selected user, configure Abliteration Large v2 (prompting
 for the API key on first run), and enable/start hermes-backend.service at boot.
 The backend listens on 127.0.0.1:9119 for local or SSH-tunneled access.
 Existing installations and HERMES_HOME/HERMES_INSTALL_DIR are respected.
+Clone strikeboxlabs/research-library into /opt/research-library and link its
+skills into this account's Hermes and Pi skill directories. Existing checkouts
+are reused without pulling; conflicting skill destinations are never replaced.
 Defaults to the sudo-invoking user, otherwise the current account.
 Requires a running systemd system. Stage 4 reuses Hermes credentials for Pi.
 Run stage2.sh first. Requires Node.js 22+, npm, curl, and network access.
@@ -75,6 +78,8 @@ if "$dry_run"; then
     printf 'Then verify /usr/local/bin/{codex,pi,claude} with --version.\n'
     printf 'curl -fsSL %q | bash -s -- --skip-setup\n' "$hermes_installer_url"
     printf 'Install Hermes as %s and publish its launcher at /usr/local/bin/hermes.\n' "$target_user"
+    printf 'Clone/reuse https://github.com/strikeboxlabs/research-library.git at /opt/research-library.\n'
+    printf 'Link its skills into the Hermes and Pi skill directories for %s, preserving existing content.\n' "$target_user"
     printf 'Configure Hermes for Abliteration Large v2, prompting for a key if needed.\n'
     printf 'Enable/restart hermes-backend.service as %s; check http://127.0.0.1:9119/api/health.\n' "$target_user"
     exit 0
@@ -83,7 +88,7 @@ fi
 (( EUID == 0 )) || die 'Run with sudo to install system-wide under /usr/local.'
 export PATH="/usr/local/bin:$PATH:/usr/sbin:/sbin"
 step 'Checking Node.js, npm, and curl'
-for tool in node npm curl python3 runuser systemctl systemd-analyze; do
+for tool in node npm curl git python3 runuser systemctl systemd-analyze; do
     command -v "$tool" >/dev/null || die "Missing $tool. Run sudo ./stage2.sh first."
 done
 id "$target_user" >/dev/null 2>&1 || die "Unknown account: $target_user"
@@ -94,6 +99,8 @@ for path in "$target_home" "$hermes_home" "$hermes_root"; do
     [[ "$path" =~ ^/[a-zA-Z0-9_./-]+$ ]] || die 'Hermes paths must be simple absolute paths.'
 done
 [[ -d "$target_home" ]] || die "Home directory does not exist: $target_home"
+[[ -f "$script_dir/configure-research-skills.py" ]] || die 'Missing configure-research-skills.py; keep the stage helpers together.'
+python3 "$script_dir/configure-research-skills.py" --user "$target_user" --hermes-home "$hermes_home"
 [[ -d /run/systemd/system ]] || die 'Stage 3 requires systemd to start the Hermes backend.'
 unit=/etc/systemd/system/hermes-backend.service
 if [[ -e "$unit" ]] && ! grep -q '^# Managed by stage3.sh$' "$unit"; then
@@ -135,6 +142,9 @@ if [[ "$hermes_cli" != /usr/local/bin/hermes ]]; then
     ln -sfn "$hermes_cli" /usr/local/bin/hermes
 fi
 hash -r
+step 'Checking out and linking shared research skills'
+python3 "$script_dir/configure-research-skills.py" --user "$target_user" --hermes-home "$hermes_home" --apply
+as_agent test -r /opt/research-library/skills
 step 'Configuring Hermes model and credentials'
 install -d -m 0755 /usr/local/libexec/stages
 install -m 0644 "$script_dir/configure-hermes.py" /usr/local/libexec/stages/configure-hermes.py
