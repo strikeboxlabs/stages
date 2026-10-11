@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Stage 4: configure Pi from Hermes and enable SSH access for Hermes Desktop.
+# Stage 4: verify Pi configuration and enable SSH access for Hermes Desktop.
 set -Eeuo pipefail
 current_step='startup'
 trap 'rc=$?; printf "Error [stage4: %s]: line %s failed (exit %s).\n" "$current_step" "$LINENO" "$rc" >&2; exit "$rc"' ERR
@@ -8,18 +8,19 @@ usage() {
     cat <<'EOF'
 Usage: ./stage4.sh [--user USER] [--dry-run]
 
-Configure Pi using the Abliteration API key and Large v2 model saved by stage 3.
+Verify Pi using its own model, endpoint, and API key saved by stage 3:
+Abliteration.ai Large v2 or Z.ai GLM-5.3.
 Enable OpenSSH at boot for Hermes Desktop connections from another computer.
 Allow TCP 22, 8642, 9119, and configured SSH ports through local IPv4 input firewall rules.
 After manually reloading a firewall, restart hermes-ssh-firewall.service.
 Run as root or via sudo. Defaults to the sudo-invoking user when present,
 otherwise the current account (including root). Override with --user.
 
-Reuses the stage-3 API key without prompting. Creates ~/.ssh/id_rsa for transfer
+Uses Pi's independent configuration without prompting. Creates ~/.ssh/id_rsa for transfer
 to your workstation, or reuses it on reruns. Copies the previous
 hermes-desktop-client key if id_rsa is absent. New keys use Ed25519. The private
 key has no passphrase for unattended use and is saved with mode 0600.
-Preserves unrelated settings and SSH keys; backs up changed agent configs.
+Preserves agent settings and existing SSH keys.
 
 Run stages 2 and 3 first. Agent credentials/configuration are per-user.
 Stage 3 runs the headless Hermes backend as hermes-backend.service.
@@ -46,10 +47,10 @@ while (( $# )); do
 done
 if "$dry_run"; then
     printf '%s\n' \
-        '[stage4] Would reuse the stage-3 Hermes API key and generate a workstation SSH key pair.' \
+        '[stage4] Would verify the independent Pi configuration and generate a workstation SSH key pair.' \
         "Target account: ${target_user:-not selected} (use --user if needed)." \
-        'Would configure Pi from Hermes for https://api.abliteration.ai/v1 and abliterated-model-large-v2.' \
-        'Would preserve unrelated settings/keys and back up existing agent configuration.' \
+        "Would use Pi's saved selection: Abliteration.ai Large v2 or Z.ai GLM-5.3." \
+        'Would preserve existing agent configuration and SSH keys.' \
         'Would check the running Hermes backend and check/install openssh-server.' \
         'Would add the public key, generate missing SSH host keys, validate sshd, and enable/start SSH.' \
         'Would persistently allow TCP 22, 8642, 9119, and configured SSH ports through the local IPv4 input firewall.' \
@@ -66,6 +67,9 @@ done
 [[ -d /run/systemd/system ]] || die 'This stage requires a running systemd system to enable SSH.'
 target_home=$(getent passwd "$target_user" | cut -d: -f6)
 [[ -d "$target_home" ]] || die "Home directory does not exist: $target_home"
+for helper in configure-desktop.py model_providers.py; do
+    [[ -f "$script_dir/$helper" ]] || die "Missing $helper; keep the stage helpers together."
+done
 init_hermes_runtime
 as_agent "$hermes_cli" --version || die 'Hermes could not start. Rerun stage3.sh.'
 systemctl is-active --quiet hermes-backend.service || die 'Hermes backend is not running. Rerun stage3.sh for this account.'
@@ -76,8 +80,9 @@ if ! command -v sshd >/dev/null || ! command -v ssh-keygen >/dev/null; then
     apt-get update || die 'Could not refresh apt indexes. Check network access and apt sources.'
     DEBIAN_FRONTEND=noninteractive apt-get install -y openssh-server || die 'OpenSSH installation failed.'
 fi
-current_step='Configuring agents and workstation SSH access'
+current_step='Verifying Pi and configuring workstation SSH access'
 install -d -m 0755 /usr/local/libexec/stages
+install -m 0644 "$script_dir/model_providers.py" /usr/local/libexec/stages/model_providers.py
 install -m 0644 "$script_dir/configure-desktop.py" /usr/local/libexec/stages/configure-desktop.py
 run_hermes_python /usr/local/libexec/stages/configure-desktop.py
 

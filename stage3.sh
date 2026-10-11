@@ -17,15 +17,18 @@ Usage: sudo ./stage3.sh [--user USER] [--dry-run]
 
 Install OpenAI Codex, Pi coding harness, and Claude Code using global npm
 packages under /usr/local (commands in /usr/local/bin).
-Install Hermes as the selected user, configure Abliteration Large v2 (prompting
-for the API key on first run), and enable/start hermes-backend.service at boot.
+Install Hermes as the selected user. Choose Abliteration.ai Large v2 or Z.ai
+GLM-5.3 separately for Hermes and Pi, with a hidden API key prompt for each agent.
+Saved keys can be kept by pressing Enter. Enable/start hermes-backend.service
+at boot. Z.ai uses the GLM Coding Plan subscription endpoint.
 The backend listens on 127.0.0.1:9119 for local or SSH-tunneled access.
 Existing installations and HERMES_HOME/HERMES_INSTALL_DIR are respected.
 Clone strikeboxlabs/research-library into /opt/research-library and link its
 skills into this account's Hermes and Pi skill directories. Existing checkouts
 are reused without pulling; conflicting skill destinations are never replaced.
 Defaults to the sudo-invoking user, otherwise the current account.
-Requires a running systemd system. Stage 4 reuses Hermes credentials for Pi.
+Requires a running systemd system. Stage 4 verifies Pi's saved configuration
+and prepares SSH access for Hermes Desktop.
 Run stage2.sh first. Requires Node.js 22+, npm, curl, and network access.
 
   --user USER  Account for Hermes (use the same account in stage 4).
@@ -80,7 +83,9 @@ if "$dry_run"; then
     printf 'Install Hermes as %s and publish its launcher at /usr/local/bin/hermes.\n' "$target_user"
     printf 'Clone/reuse https://github.com/strikeboxlabs/research-library.git at /opt/research-library.\n'
     printf 'Link its skills into the Hermes and Pi skill directories for %s, preserving existing content.\n' "$target_user"
-    printf 'Configure Hermes for Abliteration Large v2, prompting for a key if needed.\n'
+    printf 'Prompt separately for the Hermes model/API key and the Pi model/API key.\n'
+    printf 'Each agent can use Abliteration.ai Large v2 or Z.ai GLM-5.3 independently.\n'
+    printf 'Z.ai GLM-5.3 uses the GLM Coding Plan subscription endpoint.\n'
     printf 'Enable/restart hermes-backend.service as %s; check http://127.0.0.1:9119/api/health.\n' "$target_user"
     exit 0
 fi
@@ -99,7 +104,9 @@ for path in "$target_home" "$hermes_home" "$hermes_root"; do
     [[ "$path" =~ ^/[a-zA-Z0-9_./-]+$ ]] || die 'Hermes paths must be simple absolute paths.'
 done
 [[ -d "$target_home" ]] || die "Home directory does not exist: $target_home"
-[[ -f "$script_dir/configure-research-skills.py" ]] || die 'Missing configure-research-skills.py; keep the stage helpers together.'
+for helper in configure-research-skills.py configure-hermes.py model_providers.py; do
+    [[ -f "$script_dir/$helper" ]] || die "Missing $helper; keep the stage helpers together."
+done
 python3 "$script_dir/configure-research-skills.py" --user "$target_user" --hermes-home "$hermes_home"
 [[ -d /run/systemd/system ]] || die 'Stage 3 requires systemd to start the Hermes backend.'
 unit=/etc/systemd/system/hermes-backend.service
@@ -145,8 +152,9 @@ hash -r
 step 'Checking out and linking shared research skills'
 python3 "$script_dir/configure-research-skills.py" --user "$target_user" --hermes-home "$hermes_home" --apply
 as_agent test -r /opt/research-library/skills
-step 'Configuring Hermes model and credentials'
+step 'Configuring independent Hermes and Pi models and credentials'
 install -d -m 0755 /usr/local/libexec/stages
+install -m 0644 "$script_dir/model_providers.py" /usr/local/libexec/stages/model_providers.py
 install -m 0644 "$script_dir/configure-hermes.py" /usr/local/libexec/stages/configure-hermes.py
 run_hermes_python /usr/local/libexec/stages/configure-hermes.py
 
@@ -199,5 +207,5 @@ done
 systemctl is-active --quiet hermes-backend.service || die 'Hermes backend stopped after its health check.'
 printf '\nStage 3 complete. Hermes is configured for %s and running at 127.0.0.1:9119.\n' "$target_user"
 printf 'hermes-backend.service is enabled at boot. Hermes CLI: /usr/local/bin/hermes\n'
-printf 'Installed codex, pi, and claude in /usr/local/bin. Stage 4 will reuse the Hermes key for Pi.\n'
+printf 'Installed codex, pi, and claude in /usr/local/bin. Hermes and Pi have independent model/key settings.\n'
 printf 'Backend health verified; provider API access has not been tested.\n'

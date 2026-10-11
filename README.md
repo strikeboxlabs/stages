@@ -2,13 +2,37 @@
 
 Run stages in order as root or with sudo. Keep all scripts and helpers together.
 
-Stage 3 installs the CLIs, configures Hermes for Abliteration Large v2, and
-enables and starts `hermes-backend.service` on `127.0.0.1:9119`. It prompts for
-the API key once and reuses it on reruns, preserves unrelated configuration,
-and checks backend health before reporting completion. The API key and config
-backups have owner-only permissions. Provider API access is not tested.
+Stage 3 installs the CLIs and prompts independently for Hermes and Pi. For each
+agent, choose a model and enter its API key with hidden input:
 
-Stage 4 reuses that key for Pi and configures SSH access for Hermes Desktop.
+1. Abliteration.ai Large v2 (`abliterated-model-large-v2`).
+2. Z.ai GLM-5.3 (`glm-5.3`).
+
+Z.ai uses the GLM Coding Plan subscription endpoint,
+`https://api.z.ai/api/coding/paas/v4`. Enter your Coding Plan API key when choosing
+GLM-5.3. See the
+[Z.ai connection guide](https://zcode.z.ai/en/docs/configuration).
+
+Hermes and Pi can use different providers or different keys for the same
+provider. Hermes settings are saved in `HERMES_HOME/config.yaml`; Pi settings
+and credentials are saved in `~/.pi/agent`.
+
+Reruns prompt for both agents again, each with its own selection as the default.
+At each key prompt, press Enter to keep that agent's saved key when available,
+or enter a replacement. A key is kept only for the same endpoint and agent.
+Both selections are collected before writing either agent's configuration.
+Unrelated configuration is preserved, with owner-only backups. Both
+models use a 1M-token context window; GLM-5.3 is configured with reasoning enabled
+and a supported effort level, as required by its
+[model documentation](https://docs.z.ai/guides/llm/glm-5.3).
+
+Stage 3 enables and starts `hermes-backend.service` on `127.0.0.1:9119` and checks
+backend health before reporting completion. The API key and config backups have
+owner-only permissions. Provider API access is not tested. Keep
+`model_providers.py` with the configuration helpers and stage scripts.
+
+Stage 4 verifies Pi's saved model offline and configures SSH access for Hermes
+Desktop. It preserves the independent model and key choices from stage 3.
 Use the same account for both stages (default: sudo-invoking user, or root when
 run directly as root):
 
@@ -52,3 +76,9 @@ reinstalling agents or changing their configuration, run:
 ```sh
 sudo python3 configure-research-skills.py --user root --apply
 ```
+
+Keep stage scripts, their helpers, and reusable tests in this repository. Store
+temporary development workspaces, screenshots, audit output, and rollback backups
+outside the checkout. `.gitignore` excludes local work folders, credential
+directories, dependencies, caches, archives, and database snapshots. Review
+`git status --short` and the staged diff before committing.

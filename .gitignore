@@ -1,0 +1,39 @@
+# Temporary development workspaces, audits, and rollback backups
+/*-work/
+/*-backups/
+/worker-tool-audit/
+
+# Local agent settings and credentials
+/.agents/
+/.aws/
+/.codex/
+/.hermes/
+/.pi/
+.env
+.env.*
+!.env.example
+
+# Dependencies and generated test output
+node_modules/
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+playwright-report/
+test-results/
+
+# Generated archives, database snapshots, and logs
+*.tar
+*.tar.gz
+*.tgz
+*.zip
+*.bak
+*.sqlite
+*.sqlite3
+*.sqlite-*
+*.sqlite3-*
+*.db
+*.log
