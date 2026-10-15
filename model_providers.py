@@ -28,6 +28,18 @@ MODELS = (
         'max_tokens': 131072,
         'reasoning': True,
     },
+    {
+        'label': 'DeepSeek — Flash (Max)',
+        'id': 'deepseek-flash',
+        'pi_provider': 'deepseek',
+        'base_url': 'https://api.deepseek.com',
+        'key_env': 'DEEPSEEK_API_KEY',
+        'context_length': 1000000,
+        'max_tokens': 384000,
+        'reasoning': True,
+        'thinking_format': 'deepseek',
+        'reasoning_effort': 'max',
+    },
 )
 
 
@@ -123,9 +135,11 @@ def configure_pi_model(documents, selected, key):
         entry.update(reasoning=True,
                      thinkingLevelMap={'off': None, 'minimal': None, 'low': 'low',
                                        'medium': None, 'high': 'high', 'xhigh': None, 'max': 'max'},
-                     compat={'thinkingFormat': 'zai', 'supportsReasoningEffort': True,
+                     compat={'thinkingFormat': selected.get('thinking_format', 'zai'), 'supportsReasoningEffort': True,
                              'maxTokensField': 'max_tokens'})
-        if documents['settings.json'].get('defaultThinkingLevel') not in ('low', 'high', 'max'):
+        if selected.get('reasoning_effort'):
+            documents['settings.json']['defaultThinkingLevel'] = selected['reasoning_effort']
+        elif documents['settings.json'].get('defaultThinkingLevel') not in ('low', 'high', 'max'):
             documents['settings.json']['defaultThinkingLevel'] = 'max'
     provider.update(baseUrl=selected['base_url'], api='openai-completions',
                     apiKey='$' + selected['key_env'],

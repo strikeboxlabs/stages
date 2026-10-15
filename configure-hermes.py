@@ -61,8 +61,10 @@ def main():
         agent = config.setdefault('agent', {})
         if not isinstance(agent, dict):
             raise ValueError('Hermes agent configuration must be a mapping.')
-        # GLM-5.3 rejects disabled reasoning and unsupported effort levels.
-        if agent.get('reasoning_effort') not in ('low', 'high', 'max'):
+        # Keep reasoning models on a supported effort level.
+        if selected.get('reasoning_effort'):
+            agent['reasoning_effort'] = selected['reasoning_effort']
+        elif agent.get('reasoning_effort') not in ('low', 'high', 'max'):
             agent['reasoning_effort'] = 'max'
     home.mkdir(parents=True, exist_ok=True, mode=0o700)
     home.chmod(0o700)

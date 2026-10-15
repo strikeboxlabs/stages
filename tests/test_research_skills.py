@@ -221,12 +221,20 @@ class BoardIntegration(unittest.TestCase):
             self.assertEqual(path.read_text(), SOURCE)
             self.assertEqual(backup.read_text(), 'unrelated backup')
 
-    def test_stage_dry_runs_describe_integration_without_modifying_system(self):
+    def test_core_stages_do_not_provision_research_library(self):
         for stage in ['stage3.sh', 'stage5.sh']:
             result = subprocess.run(['bash', str(ROOT / stage), '--dry-run'], capture_output=True, text=True, check=True)
-            self.assertIn('/opt/research-library', result.stdout)
-            self.assertIn('Hermes and Pi', result.stdout)
-        self.assertIn('--no-skills --skill /opt/research-library/skills', result.stdout)
+            self.assertNotIn('/opt/research-library', result.stdout)
+            source = (ROOT / stage).read_text()
+            self.assertNotIn('configure-research-skills.py', source)
+            self.assertNotIn('configure-board-skills.py', source)
+        self.assertIn('configure-board-sessions.py', (ROOT / 'stage5.sh').read_text())
+
+    def test_standalone_installer_describes_library_and_agent_integration(self):
+        result = subprocess.run(['bash', str(ROOT / 'install-offensive-tools.sh'), '--dry-run'],
+                                capture_output=True, text=True, check=True)
+        self.assertIn('/opt/research-library', result.stdout)
+        self.assertIn('Hermes and Pi', result.stdout)
 
 
 if __name__ == '__main__':

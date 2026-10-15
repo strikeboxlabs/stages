@@ -9,7 +9,7 @@ usage() {
 Usage: ./stage4.sh [--user USER] [--dry-run]
 
 Verify Pi using its own model, endpoint, and API key saved by stage 3:
-Abliteration.ai Large v2 or Z.ai GLM-5.3.
+Abliteration.ai Large v2, Z.ai GLM-5.3, or DeepSeek Flash (Max).
 Enable OpenSSH at boot for Hermes Desktop connections from another computer.
 Allow TCP 22, 8642, 9119, and configured SSH ports through local IPv4 input firewall rules.
 After manually reloading a firewall, restart hermes-ssh-firewall.service.
@@ -49,7 +49,7 @@ if "$dry_run"; then
     printf '%s\n' \
         '[stage4] Would verify the independent Pi configuration and generate a workstation SSH key pair.' \
         "Target account: ${target_user:-not selected} (use --user if needed)." \
-        "Would use Pi's saved selection: Abliteration.ai Large v2 or Z.ai GLM-5.3." \
+        "Would use Pi's saved selection: Abliteration.ai Large v2, Z.ai GLM-5.3, or DeepSeek Flash (Max)." \
         'Would preserve existing agent configuration and SSH keys.' \
         'Would check the running Hermes backend and check/install openssh-server.' \
         'Would add the public key, generate missing SSH host keys, validate sshd, and enable/start SSH.' \

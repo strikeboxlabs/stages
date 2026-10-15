@@ -17,15 +17,12 @@ Usage: sudo ./stage3.sh [--user USER] [--dry-run]
 
 Install OpenAI Codex, Pi coding harness, and Claude Code using global npm
 packages under /usr/local (commands in /usr/local/bin).
-Install Hermes as the selected user. Choose Abliteration.ai Large v2 or Z.ai
-GLM-5.3 separately for Hermes and Pi, with a hidden API key prompt for each agent.
+Install Hermes as the selected user. Choose Abliteration.ai Large v2, Z.ai
+GLM-5.3, or DeepSeek Flash (Max) separately for Hermes and Pi, with a hidden API key prompt for each agent.
 Saved keys can be kept by pressing Enter. Enable/start hermes-backend.service
 at boot. Z.ai uses the GLM Coding Plan subscription endpoint.
 The backend listens on 127.0.0.1:9119 for local or SSH-tunneled access.
 Existing installations and HERMES_HOME/HERMES_INSTALL_DIR are respected.
-Clone strikeboxlabs/research-library into /opt/research-library and link its
-skills into this account's Hermes and Pi skill directories. Existing checkouts
-are reused without pulling; conflicting skill destinations are never replaced.
 Defaults to the sudo-invoking user, otherwise the current account.
 Requires a running systemd system. Stage 4 verifies Pi's saved configuration
 and prepares SSH access for Hermes Desktop.
@@ -71,20 +68,19 @@ hermes_installer_url=https://hermes-agent.nousresearch.com/install.sh
 if "$dry_run"; then
     printf '[stage3] Requires Node.js 22+ and npm from stage2.sh. Would run:\n'
     for i in "${!packages[@]}"; do
-        script_flag=--ignore-scripts=false
+        script_flags=(--ignore-scripts=false)
         # Pi explicitly recommends disabling lifecycle scripts for its package.
-        [[ "${commands[$i]}" != pi ]] || script_flag=--ignore-scripts
+        [[ "${commands[$i]}" != pi ]] || script_flags=(--ignore-scripts)
+        [[ "${commands[$i]}" != claude ]] || script_flags+=(--allow-scripts=@anthropic-ai/claude-code)
         printf 'npm install'
-        printf ' %q' "${npm_flags[@]}" "$script_flag" "${packages[$i]}"
+        printf ' %q' "${npm_flags[@]}" "${script_flags[@]}" "${packages[$i]}"
         printf '\n'
     done
     printf 'Then verify /usr/local/bin/{codex,pi,claude} with --version.\n'
     printf 'curl -fsSL %q | bash -s -- --skip-setup\n' "$hermes_installer_url"
     printf 'Install Hermes as %s and publish its launcher at /usr/local/bin/hermes.\n' "$target_user"
-    printf 'Clone/reuse https://github.com/strikeboxlabs/research-library.git at /opt/research-library.\n'
-    printf 'Link its skills into the Hermes and Pi skill directories for %s, preserving existing content.\n' "$target_user"
     printf 'Prompt separately for the Hermes model/API key and the Pi model/API key.\n'
-    printf 'Each agent can use Abliteration.ai Large v2 or Z.ai GLM-5.3 independently.\n'
+    printf 'Each agent can use Abliteration.ai Large v2, Z.ai GLM-5.3, or DeepSeek Flash (Max) independently.\n'
     printf 'Z.ai GLM-5.3 uses the GLM Coding Plan subscription endpoint.\n'
     printf 'Enable/restart hermes-backend.service as %s; check http://127.0.0.1:9119/api/health.\n' "$target_user"
     exit 0
@@ -104,10 +100,9 @@ for path in "$target_home" "$hermes_home" "$hermes_root"; do
     [[ "$path" =~ ^/[a-zA-Z0-9_./-]+$ ]] || die 'Hermes paths must be simple absolute paths.'
 done
 [[ -d "$target_home" ]] || die "Home directory does not exist: $target_home"
-for helper in configure-research-skills.py configure-hermes.py model_providers.py; do
+for helper in configure-hermes.py model_providers.py; do
     [[ -f "$script_dir/$helper" ]] || die "Missing $helper; keep the stage helpers together."
 done
-python3 "$script_dir/configure-research-skills.py" --user "$target_user" --hermes-home "$hermes_home"
 [[ -d /run/systemd/system ]] || die 'Stage 3 requires systemd to start the Hermes backend.'
 unit=/etc/systemd/system/hermes-backend.service
 if [[ -e "$unit" ]] && ! grep -q '^# Managed by stage3.sh$' "$unit"; then
@@ -123,9 +118,11 @@ for i in "${!packages[@]}"; do
     package=${packages[$i]}
     cli=${commands[$i]}
     step "Installing $package"
-    script_flag=--ignore-scripts=false
-    [[ "$cli" != pi ]] || script_flag=--ignore-scripts
-    npm install "${npm_flags[@]}" "$script_flag" "$package" || \
+    script_flags=(--ignore-scripts=false)
+    [[ "$cli" != pi ]] || script_flags=(--ignore-scripts)
+    # npm 12 requires explicit approval in addition to enabling lifecycle scripts.
+    [[ "$cli" != claude ]] || script_flags+=(--allow-scripts=@anthropic-ai/claude-code)
+    npm install "${npm_flags[@]}" "${script_flags[@]}" "$package" || \
         die "Installation failed for $package. Check the npm error above (network, Node.js compatibility, or file permissions), then rerun stage3.sh. Earlier successful installations remain in place."
     step "Verifying $cli"
     cli_path="$npm_prefix/bin/$cli"
@@ -149,9 +146,6 @@ if [[ "$hermes_cli" != /usr/local/bin/hermes ]]; then
     ln -sfn "$hermes_cli" /usr/local/bin/hermes
 fi
 hash -r
-step 'Checking out and linking shared research skills'
-python3 "$script_dir/configure-research-skills.py" --user "$target_user" --hermes-home "$hermes_home" --apply
-as_agent test -r /opt/research-library/skills
 step 'Configuring independent Hermes and Pi models and credentials'
 install -d -m 0755 /usr/local/libexec/stages
 install -m 0644 "$script_dir/model_providers.py" /usr/local/libexec/stages/model_providers.py

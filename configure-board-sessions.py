@@ -35,7 +35,10 @@ def patch_source(source):
     method = next(node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name == '_local_argv')
     lines = source.splitlines(keepends=True)
     original = ''.join(lines[method.lineno - 1:method.end_lineno])
-    digest = hashlib.sha256(original.encode()).hexdigest()
+    sast_block = '            "--skill",\n            "/opt/sast-tools/skills",\n'
+    if original.count(sast_block) > 1:
+        raise ValueError('Duplicate SAST skill arguments.')
+    digest = hashlib.sha256(original.replace(sast_block, '').encode()).hexdigest()
     if digest in (PATCHED_METHOD_SHA256, PATCHED_WITH_SKILLS_METHOD_SHA256):
         return source
     if digest not in (ORIGINAL_METHOD_SHA256, ORIGINAL_WITH_SKILLS_METHOD_SHA256):

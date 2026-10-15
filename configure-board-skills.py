@@ -19,36 +19,45 @@ WITH_SKILLS = {
 }
 
 
-def patch_source(source):
+SAST_BLOCK = '            "--skill",\n            "/opt/sast-tools/skills",\n'
+
+
+def patch_source(source, skills_dir='/opt/research-library/skills'):
+    if skills_dir not in ('/opt/research-library/skills', '/opt/sast-tools/skills'):
+        raise ValueError('Unsupported managed skill directory.')
     tree = ast.parse(source)
     cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == 'PiDriver')
     method = next(n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name == '_local_argv')
     lines = source.splitlines(keepends=True)
     original = ''.join(lines[method.lineno - 1:method.end_lineno])
-    digest = hashlib.sha256(original.encode()).hexdigest()
-    if digest in WITH_SKILLS:
-        return source
-    if digest not in WITHOUT_SKILLS:
+    if original.count(SAST_BLOCK) > 1:
+        raise ValueError('Duplicate SAST skill arguments.')
+    normalized = original.replace(SAST_BLOCK, '')
+    digest = hashlib.sha256(normalized.encode()).hexdigest()
+    if digest not in WITHOUT_SKILLS | WITH_SKILLS:
         raise ValueError('Board PiDriver._local_argv changed; review the skill integration before applying it. No files changed.')
+    if ((skills_dir == '/opt/sast-tools/skills' and SAST_BLOCK in original) or
+            (skills_dir == '/opt/research-library/skills' and digest in WITH_SKILLS)):
+        return source
     anchor = '            "--no-skills",\n'
     assert original.count(anchor) == 1
-    replacement = original.replace(anchor, anchor + '            "--skill",\n            "/opt/research-library/skills",\n')
+    replacement = original.replace(anchor, anchor + '            "--skill",\n            ' + repr(skills_dir).replace("'", '"') + ',\n')
     result = ''.join(lines[:method.lineno - 1]) + replacement + ''.join(lines[method.end_lineno:])
     ast.parse(result)
     return result
 
 
-def configure(board_root, apply=False):
+def configure(board_root, apply=False, skills_dir='/opt/research-library/skills'):
     path = board_root / 'board/src/board/dispatcher/workers/adapters/pi.py'
     if path.is_symlink():
         raise ValueError(f'Refusing symlinked adapter: {path}')
     source = path.read_text()
-    updated = patch_source(source)
+    updated = patch_source(source, skills_dir)
     if updated == source:
-        print('Board local Pi research skills already configured.')
+        print(f'Board local Pi skills already configured: {skills_dir}')
         return False
     if not apply:
-        print('Pi adapter is compatible; would explicitly load /opt/research-library/skills.')
+        print(f'Pi adapter is compatible; would explicitly load {skills_dir}.')
         return True
     metadata = path.stat()
     backup = path.with_name(path.name + '.before-research-skills-' + hashlib.sha256(source.encode()).hexdigest()[:12])
@@ -79,9 +88,10 @@ def configure(board_root, apply=False):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--board-root', type=Path, default=Path('/opt/board'))
+    parser.add_argument('--skills-dir', choices=['/opt/research-library/skills', '/opt/sast-tools/skills'], default='/opt/research-library/skills')
     parser.add_argument('--apply', action='store_true', help='Apply with a backup; otherwise check only')
     args = parser.parse_args()
     try:
-        configure(args.board_root, args.apply)
+        configure(args.board_root, args.apply, args.skills_dir)
     except (ValueError, OSError, StopIteration, SyntaxError) as exc:
         raise SystemExit(f'Cannot configure Board research skills: {exc}') from exc

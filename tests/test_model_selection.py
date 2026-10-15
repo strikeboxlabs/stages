@@ -68,7 +68,8 @@ class ModelSelection(unittest.TestCase):
         return json.loads(self.config.read_text()), SHARED.load_pi_documents(self.pi_root), terminal, prompt
 
     def test_all_model_combinations_and_same_provider_distinct_keys(self):
-        for hermes_choice, pi_choice in [('1', '1'), ('1', '2'), ('2', '1'), ('2', '2')]:
+        choices = [str(i) for i in range(1, len(SHARED.MODELS) + 1)]
+        for hermes_choice, pi_choice in [(h, p) for h in choices for p in choices]:
             with self.subTest(hermes=hermes_choice, pi=pi_choice):
                 self.config.write_text(json.dumps({'display': {'keep': True},
                                                    'agent': {'reasoning_effort': 'none'}}))
@@ -85,6 +86,8 @@ class ModelSelection(unittest.TestCase):
                 self.assertEqual(config['model']['default'], hermes_model['id'])
                 self.assertEqual(config['model']['base_url'], hermes_model['base_url'])
                 self.assertEqual(config['model']['api_key'], '!hermes$key')
+                self.assertEqual(config['model']['context_length'], hermes_model['context_length'])
+                self.assertEqual(config['model']['api_mode'], 'chat_completions')
                 self.assertEqual(config['display'], {'keep': True})
                 settings = documents['settings.json']
                 self.assertEqual((settings['defaultProvider'], settings['defaultModel']),
@@ -102,13 +105,35 @@ class ModelSelection(unittest.TestCase):
                 self.assertNotIn('!pi$key', terminal.output.getvalue())
                 for path in [self.config] + [self.pi_root / name for name in documents]:
                     self.assertEqual(path.stat().st_mode & 0o777, 0o600)
-                if hermes_choice == '2':
+                if hermes_model.get('reasoning'):
                     self.assertEqual(config['agent']['reasoning_effort'], 'max')
-                if pi_choice == '2':
+                if pi_model.get('reasoning'):
                     self.assertEqual(settings['defaultThinkingLevel'], 'max')
-                    entry = documents['models.json']['providers']['zai']['models'][0]
+                    entry = documents['models.json']['providers'][pi_model['pi_provider']]['models'][0]
                     self.assertTrue(entry['reasoning'])
+                    self.assertEqual(entry['compat']['thinkingFormat'],
+                                     pi_model.get('thinking_format', 'zai'))
+                    self.assertEqual(entry['maxTokens'], pi_model['max_tokens'])
                     self.assertIsNone(entry['thinkingLevelMap']['off'])
+
+    def test_deepseek_rerun_keeps_independent_keys_and_saved_selection(self):
+        self.configure('3\n3\n', ('deepseek-hermes', 'deepseek-pi'))
+        config = json.loads(self.config.read_text())
+        config['agent']['reasoning_effort'] = 'low'
+        self.config.write_text(json.dumps(config))
+        settings_path = self.pi_root / 'settings.json'
+        settings = json.loads(settings_path.read_text())
+        settings['defaultThinkingLevel'] = 'high'
+        settings_path.write_text(json.dumps(settings))
+        config, documents, terminal, prompt = self.configure('\n\n', ('', ''))
+        self.assertEqual(config['agent']['reasoning_effort'], 'max')
+        self.assertEqual(documents['settings.json']['defaultThinkingLevel'], 'max')
+        self.assertEqual(config['model']['default'], 'deepseek-flash')
+        self.assertEqual(config['model']['api_key'], 'deepseek-hermes')
+        self.assertEqual(SHARED.saved_pi_model(documents)['id'], 'deepseek-flash')
+        self.assertEqual(SHARED.saved_pi_key(documents, SHARED.MODELS[2]), 'deepseek-pi')
+        self.assertIn('default 3', terminal.output.getvalue())
+        self.assertTrue(all('Enter to keep' in call.args[0] for call in prompt.call_args_list))
 
     def test_rerun_keeps_each_agents_own_model_and_literal_key(self):
         self.configure('2\n1\n', ('!hermes$key', '!pi$key'))
