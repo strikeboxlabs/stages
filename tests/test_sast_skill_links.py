@@ -8,8 +8,6 @@ from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 LINKS = runpy.run_path(str(ROOT / 'configure-sast-skills.py'))
-BOARD = runpy.run_path(str(ROOT / 'configure-board-skills.py'))
-SESSIONS = runpy.run_path(str(ROOT / 'configure-board-sessions.py'))
 
 
 class SastLinks(unittest.TestCase):
@@ -17,6 +15,8 @@ class SastLinks(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             repo = root / 'checkout'
+            repo.mkdir()
+            (repo / 'catalog.json').write_text('{"schema_version":1,"library_id":"sast","skills":[]}')
             skill = repo / 'skills/bandit'
             skill.mkdir(parents=True)
             (skill / 'SKILL.md').touch()
@@ -41,18 +41,8 @@ class SastLinks(unittest.TestCase):
                     function(repo, 'test', tools_root=tools, apply=True)
                 for link in [home / '.hermes/skills/sast', conflict, tools / 'skills']:
                     self.assertEqual(link.resolve(), repo / 'skills')
+                self.assertEqual((tools / 'catalog.json').resolve(), repo / 'catalog.json')
 
-    def test_board_sast_and_transcripts_work_in_both_orders(self):
-        # Reuse the known adapter fixture used by the existing integration tests.
-        import test_research_skills
-        source = test_research_skills.SOURCE
-        skills = lambda text: BOARD['patch_source'](text, '/opt/sast-tools/skills')
-        sessions = SESSIONS['patch_source']
-        self.assertEqual(skills(sessions(source)), sessions(skills(source)))
-        result = sessions(skills(source))
-        self.assertEqual(skills(result), result)
-        self.assertIn('/opt/sast-tools/skills', result)
-        self.assertNotIn('/opt/research-library/skills', result)
-        both = BOARD['patch_source'](result)
-        self.assertEqual(skills(both), both)
-        self.assertEqual(sessions(both), both)
+
+if __name__ == '__main__':
+    unittest.main()

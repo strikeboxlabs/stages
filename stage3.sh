@@ -13,7 +13,7 @@ die() { printf 'Error [stage3: %s]: %s\n' "$current_step" "$*" >&2; exit 1; }
 
 usage() {
     cat <<'EOF'
-Usage: sudo ./stage3.sh [--user USER] [--dry-run]
+Usage: sudo ./stage3.sh [--user USER] [--pi-version VERSION] [--dry-run]
 
 Install OpenAI Codex, Pi coding harness, and Claude Code using global npm
 packages under /usr/local (commands in /usr/local/bin).
@@ -26,13 +26,15 @@ Existing installations and HERMES_HOME/HERMES_INSTALL_DIR are respected.
 Defaults to the sudo-invoking user, otherwise the current account.
 Requires a running systemd system. Stage 4 verifies Pi's saved configuration
 and prepares SSH access for Hermes Desktop.
-Run stage2.sh first. Requires Node.js 22+, npm, curl, and network access.
+Run stage2.sh first. Requires Node.js 22.19+, npm, curl, and network access.
 
   --user USER  Account for Hermes (use the same account in stage 4).
+  --pi-version VERSION  Exact Pi version (default: PI_VERSION or 1.3.0).
   --dry-run  Print installation commands without changing anything.
   --help     Show this help.
 
-Rerunning installs the latest releases, including upgrades. Each CLI is
+Pi is pinned; upgrading it requires --pi-version or PI_VERSION. Other CLIs use
+the latest releases. Stop the Board dispatcher before modifying agents. Each CLI is
 checked with --version; backend health is checked before completion. Codex
 and Claude authentication remain specific to those agents.
 EOF
@@ -43,10 +45,13 @@ script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 source "$script_dir/hermes-runtime.sh"
 target_user=${SUDO_USER:-$(id -un)}
 dry_run=false
+pi_version=${PI_VERSION:-1.3.0}
 while (( $# )); do
     case "$1" in
         --dry-run) dry_run=true; shift ;;
         --help|-h) usage; exit 0 ;;
+        --pi-version) (( $# >= 2 )) || die '--pi-version requires an exact version.'
+            pi_version=$2; shift 2 ;;
         --user) (( $# >= 2 )) || die '--user requires an account name.'
             target_user=$2; shift 2 ;;
         *) usage >&2; exit 2 ;;
@@ -54,9 +59,11 @@ while (( $# )); do
 done
 [[ "$target_user" =~ ^[a-zA-Z0-9_][a-zA-Z0-9_.-]*\$?$ ]] || die 'Select a valid account with --user USER.'
 
+[[ "$pi_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.-]+)?$ ]] || die 'Pi requires an exact semantic version; latest and ranges are refused.'
+
 packages=(
     '@openai/codex@latest'
-    '@earendil-works/pi-coding-agent@latest'
+    "@earendil-works/pi-coding-agent@$pi_version"
     '@anthropic-ai/claude-code@latest'
 )
 commands=(codex pi claude)
@@ -66,7 +73,7 @@ npm_flags=(--global --prefix "$npm_prefix" --engine-strict --include=optional)
 hermes_installer_url=https://hermes-agent.nousresearch.com/install.sh
 
 if "$dry_run"; then
-    printf '[stage3] Requires Node.js 22+ and npm from stage2.sh. Would run:\n'
+    printf '[stage3] Requires Node.js 22.19+ and npm from stage2.sh. Would run:\n'
     for i in "${!packages[@]}"; do
         script_flags=(--ignore-scripts=false)
         # Pi explicitly recommends disabling lifecycle scripts for its package.
@@ -87,6 +94,9 @@ if "$dry_run"; then
 fi
 
 (( EUID == 0 )) || die 'Run with sudo to install system-wide under /usr/local.'
+if command -v systemctl >/dev/null && systemctl is-active --quiet board-dispatcher.service; then
+    die 'Board dispatcher is active. Finish active work and stop board-dispatcher.service before upgrading agents; no changes made.'
+fi
 export PATH="/usr/local/bin:$PATH:/usr/sbin:/sbin"
 step 'Checking Node.js, npm, and curl'
 for tool in node npm curl git python3 runuser systemctl systemd-analyze; do
@@ -109,9 +119,8 @@ if [[ -e "$unit" ]] && ! grep -q '^# Managed by stage3.sh$' "$unit"; then
     die "Refusing to overwrite unmanaged service: $unit"
 fi
 node_version=$(node --version)
-node_major=$(node -p 'process.versions.node.split(".")[0]')
-[[ "$node_major" =~ ^[0-9]+$ ]] || die "Could not parse Node.js version: $node_version"
-(( node_major >= 22 )) || die "Node.js $node_version is too old. Install Node.js 22 or newer, then rerun stage3.sh."
+node -e 'const [major,minor] = process.versions.node.split(".").map(Number); process.exit(major > 22 || (major === 22 && minor >= 19) ? 0 : 1)' || \
+    die "Node.js $node_version is too old. Install Node.js 22.19 or newer, then rerun stage3.sh."
 printf 'Node.js: %s\nnpm: %s\n' "$node_version" "$(npm --version)"
 
 for i in "${!packages[@]}"; do
@@ -127,7 +136,11 @@ for i in "${!packages[@]}"; do
     step "Verifying $cli"
     cli_path="$npm_prefix/bin/$cli"
     [[ -x "$cli_path" ]] || die "Installation completed but $cli_path is missing or not executable."
-    "$cli_path" --version || die "$cli_path could not start. Check the error above and rerun after fixing it."
+    cli_version=$("$cli_path" --version) || die "$cli_path could not start. Check the error above and rerun after fixing it."
+    printf '%s\n' "$cli_version"
+    if [[ "$cli" == pi && "$cli_version" != "$pi_version" ]]; then
+        die "Expected Pi $pi_version but $cli_path reports $cli_version. Resolve the installation before continuing."
+    fi
 done
 
 step 'Installing Nous Hermes Agent'

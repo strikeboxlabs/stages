@@ -19,6 +19,8 @@ def validate_checkout(checkout):
         ['git', '-C', str(checkout), 'remote', 'get-url', 'origin'], text=True).strip()
     if origin.removesuffix('.git') != REPOSITORY.removesuffix('.git'):
         raise ValueError(f'Refusing a checkout with a different Git origin: {checkout}')
+    if not (checkout / 'catalog.json').is_file():
+        raise ValueError(f'Missing catalog.json in {checkout}; update this checkout to a catalog-enabled revision first.')
     skills = checkout / 'skills'
     if skills.is_symlink() or not skills.is_dir() or not any(skills.glob('*/SKILL.md')):
         raise ValueError(f'Repository layout changed: expected skills/*/SKILL.md in {checkout}')

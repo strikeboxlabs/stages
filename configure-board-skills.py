@@ -1,97 +1,66 @@
 #!/usr/bin/env python3
-"""Add the shared skills to Board's local Pi launches without changing other flags."""
+"""Register installed catalogs in native Board config; never patch Board source."""
 import argparse
-import ast
-import hashlib
-import os
 from pathlib import Path
-import tempfile
+from board_config import doctor, require_native, update_config
 
-
-# Exact known _local_argv methods, before/after the project-session integration.
-WITHOUT_SKILLS = {
-    'b3b42476a2ca60f1ff7c2ba9f7df1eac0a5b6c805ede87e8f10f963c7f7802c8',
-    '35afc65114db64316ada2dbf150cecdceaedc03525d89ae5e654dcabacfaf4a2',
-}
-WITH_SKILLS = {
-    'b9a0a36be4ad183178b4755e5d2bc73a5ca84e2ba1ad24d44871d9eaeca3db8a',
-    '71ca9680994ba2a3f8e6be030bb9e2780608bffa4477587465e31a6831d06b58',
+MANAGED_CATALOGS = {
+    '/opt/research-library/skills': '/opt/research-library/catalog.json',
+    '/opt/sast-tools/skills': '/opt/sast-tools/catalog.json',
 }
 
 
-SAST_BLOCK = '            "--skill",\n            "/opt/sast-tools/skills",\n'
+def register_catalog(mapping, catalog):
+    catalogs = mapping.setdefault('catalogs', [])
+    if not isinstance(catalogs, list) or not all(isinstance(item, str) for item in catalogs):
+        raise ValueError('skills.catalogs must be a list of paths.')
+    if str(catalog) not in catalogs:
+        catalogs.append(str(catalog))
+    mapping['enabled'] = True
+    mapping.setdefault('default_profiles', ['general'])
+    mapping.setdefault('max_metadata_tokens', 6000)
 
 
-def patch_source(source, skills_dir='/opt/research-library/skills'):
-    if skills_dir not in ('/opt/research-library/skills', '/opt/sast-tools/skills'):
-        raise ValueError('Unsupported managed skill directory.')
-    tree = ast.parse(source)
-    cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == 'PiDriver')
-    method = next(n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name == '_local_argv')
-    lines = source.splitlines(keepends=True)
-    original = ''.join(lines[method.lineno - 1:method.end_lineno])
-    if original.count(SAST_BLOCK) > 1:
-        raise ValueError('Duplicate SAST skill arguments.')
-    normalized = original.replace(SAST_BLOCK, '')
-    digest = hashlib.sha256(normalized.encode()).hexdigest()
-    if digest not in WITHOUT_SKILLS | WITH_SKILLS:
-        raise ValueError('Board PiDriver._local_argv changed; review the skill integration before applying it. No files changed.')
-    if ((skills_dir == '/opt/sast-tools/skills' and SAST_BLOCK in original) or
-            (skills_dir == '/opt/research-library/skills' and digest in WITH_SKILLS)):
-        return source
-    anchor = '            "--no-skills",\n'
-    assert original.count(anchor) == 1
-    replacement = original.replace(anchor, anchor + '            "--skill",\n            ' + repr(skills_dir).replace("'", '"') + ',\n')
-    result = ''.join(lines[:method.lineno - 1]) + replacement + ''.join(lines[method.end_lineno:])
-    ast.parse(result)
-    return result
-
-
-def configure(board_root, apply=False, skills_dir='/opt/research-library/skills'):
-    path = board_root / 'board/src/board/dispatcher/workers/adapters/pi.py'
-    if path.is_symlink():
-        raise ValueError(f'Refusing symlinked adapter: {path}')
-    source = path.read_text()
-    updated = patch_source(source, skills_dir)
-    if updated == source:
-        print(f'Board local Pi skills already configured: {skills_dir}')
+def configure(board_root, apply=False, skills_dir='/opt/research-library/skills', *,
+              catalog=None, config=None, user=None, group=None, check_native=False,
+              backup_dir=Path('/var/lib/stages/board-config-backups'), board_command=None):
+    board_root = Path(board_root)
+    board_bin = board_command or board_root / 'board/.venv/bin/board'
+    require_native(board_bin)
+    if check_native:
+        print('Native Board skill-profile configuration is available; no source changes.')
         return False
-    if not apply:
-        print(f'Pi adapter is compatible; would explicitly load {skills_dir}.')
-        return True
-    metadata = path.stat()
-    backup = path.with_name(path.name + '.before-research-skills-' + hashlib.sha256(source.encode()).hexdigest()[:12])
-    if os.path.lexists(backup):
-        if backup.is_symlink() or backup.read_text() != source:
-            raise ValueError(f'Refusing conflicting adapter backup: {backup}')
-    else:
-        with backup.open('x') as output:
-            os.fchmod(output.fileno(), 0o600)
-            output.write(source)
-    fd, temporary = tempfile.mkstemp(prefix='.' + path.name + '-', dir=path.parent)
-    try:
-        with os.fdopen(fd, 'w') as output:
-            output.write(updated)
-            output.flush()
-            os.fsync(output.fileno())
-            os.fchmod(output.fileno(), metadata.st_mode & 0o777)
-            if os.geteuid() == 0:
-                os.fchown(output.fileno(), metadata.st_uid, metadata.st_gid)
-        os.replace(temporary, path)
-    finally:
-        if os.path.exists(temporary):
-            os.unlink(temporary)
-    print(f'Board local Pi skills configured; backup: {backup}')
-    return True
+    if catalog is None:
+        if skills_dir not in MANAGED_CATALOGS:
+            raise ValueError('Unsupported managed skill directory; use --catalog PATH.')
+        catalog = Path(MANAGED_CATALOGS[skills_dir])
+    catalog = Path(catalog)
+    if not catalog.is_absolute() or not catalog.is_file():
+        raise ValueError(f'An installed, readable absolute catalog path is required: {catalog}')
+    path = Path(config) if config else board_root / 'dispatch.yaml'
+    changed = update_config(path, 'skills', lambda mapping: register_catalog(mapping, catalog),
+                            apply=apply, backup_dir=backup_dir,
+                            validate=lambda candidate: doctor(board_bin, candidate, user, group))
+    print(f'{"Configured" if apply else "Validated"} Board catalog {catalog}; other settings and session data preserved.')
+    return changed
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--board-root', type=Path, default=Path('/opt/board'))
-    parser.add_argument('--skills-dir', choices=['/opt/research-library/skills', '/opt/sast-tools/skills'], default='/opt/research-library/skills')
-    parser.add_argument('--apply', action='store_true', help='Apply with a backup; otherwise check only')
+    parser.add_argument('--config', type=Path)
+    parser.add_argument('--skills-dir', choices=list(MANAGED_CATALOGS), default='/opt/research-library/skills', help='Compatibility alias for the managed catalog path')
+    parser.add_argument('--catalog', type=Path)
+    parser.add_argument('--user', help='Actual dispatcher account for local doctor checks')
+    parser.add_argument('--group', help='Dispatcher primary group, when configured')
+    parser.add_argument('--check-native', action='store_true', help='Check Board support without registering a catalog')
+    parser.add_argument('--backup-dir', type=Path, default=Path('/var/lib/stages/board-config-backups'))
+    parser.add_argument('--board-bin', type=Path, help='Override the installed native Board executable')
+    parser.add_argument('--apply', action='store_true')
     args = parser.parse_args()
     try:
-        configure(args.board_root, args.apply, args.skills_dir)
-    except (ValueError, OSError, StopIteration, SyntaxError) as exc:
-        raise SystemExit(f'Cannot configure Board research skills: {exc}') from exc
+        configure(args.board_root, args.apply, args.skills_dir, catalog=args.catalog,
+                  config=args.config, user=args.user, group=args.group, check_native=args.check_native,
+                  backup_dir=args.backup_dir, board_command=args.board_bin)
+    except (OSError, ValueError) as exc:
+        raise SystemExit(f'Cannot configure Board skills: {exc}') from exc

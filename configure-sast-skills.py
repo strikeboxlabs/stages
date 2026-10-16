@@ -14,20 +14,25 @@ def configure(repo, user, hermes_home=None, tools_root=Path('/opt/sast-tools'), 
     target = repo.resolve() / 'skills'
     if not target.is_dir() or not any(target.glob('*/SKILL.md')):
         raise ValueError(f'No SAST skills found: {target}')
+    catalog = repo.resolve() / 'catalog.json'
+    if not catalog.is_file():
+        raise ValueError(f'Missing SAST catalog: {catalog}; update the selected checkout first.')
     home = Path(account.pw_dir)
     hermes_home = Path(hermes_home) if hermes_home else home / '.hermes'
     if not hermes_home.is_absolute():
         raise ValueError('HERMES_HOME must be absolute.')
-    links = [hermes_home / 'skills/sast', home / '.pi/agent/skills/sast', tools_root / 'skills']
-    for link in links:
-        HELPERS['validate_link'](link, target)
-    for link in links:
+    links = [(hermes_home / 'skills/sast', target),
+             (home / '.pi/agent/skills/sast', target),
+             (tools_root / 'skills', target), (tools_root / 'catalog.json', catalog)]
+    for link, destination in links:
+        HELPERS['validate_link'](link, destination)
+    for link, destination in links:
         if apply and not os.path.lexists(link):
-            uid, gid = (account.pw_uid, account.pw_gid) if link != tools_root / 'skills' else (os.geteuid(), os.getegid())
+            uid, gid = (os.geteuid(), os.getegid()) if link.parent == tools_root else (account.pw_uid, account.pw_gid)
             HELPERS['make_parents'](link.parent, uid, gid)
-            link.symlink_to(target, target_is_directory=True)
+            link.symlink_to(destination, target_is_directory=destination.is_dir())
             os.chown(link, uid, gid, follow_symlinks=False)
-        print(f'{"Linked" if apply else "Would link"} {link} -> {target}')
+        print(f'{"Linked" if apply else "Would link"} {link} -> {destination}')
 
 
 if __name__ == '__main__':

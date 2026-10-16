@@ -13,7 +13,7 @@ Clone https://github.com/strikeboxlabs/board.git into /opt/board and install
 its locked Python dependencies. Enable the server and Pi dispatcher at boot.
 Requires Debian/Kali, Python 3.12+, systemd, and internet access.
 Run stages 2–4 first to install Pi and configure its model and credentials.
-Install optional skill libraries separately using their dedicated installers.
+Install optional tools and skills separately using install-tools.sh.
 
   --user USER     Run the dispatcher as this stage-4 account (defaults to
                   the sudo-invoking user, otherwise the current account).
@@ -29,8 +29,8 @@ Creates /opt/board/dispatch.yaml if absent, with 5 total worker slots, 2 project
 3 workers per project, and up to 3 concurrent Pi sessions. Runs are stored in
 /data/cairn-runs. Pi transcripts are stored in each project's sessions/pi folder.
 Edit dispatch.yaml to customize these settings. Keep the stage helpers together.
-Reruns preserve dispatch.yaml, the checkout, credentials and data, reinstall
-locked dependencies, and replace/restart both managed services. Existing configs
+Reruns require the dispatcher to be stopped, preserve dispatch.yaml, the checkout,
+credentials and data, reinstall locked dependencies, and start both managed services. Existing configs
 must point to the API address selected by --host/--port.
 Starting the dispatcher also starts work on existing active projects.
 Allows the configured TCP port through local input firewall rules on each
@@ -69,7 +69,7 @@ if "$dry_run"; then
     printf '%s\n' \
         'Would install git, Python venv support, curl, CA certificates, and uv.' \
         'Would create the board service account and clone into /opt/board.' \
-        'Would preserve the session integration and store Pi transcripts in each project under sessions/pi.' \
+        'Would use native session settings and store Pi transcripts in each project under sessions/pi.' \
         'Would install dependencies from board/uv.lock and retain data in /var/lib/board.' \
         "Would enable/start board.service on $bind_host:$port and check /projects." \
         "Would allow TCP $port through local IPv4 input firewall rules on every service start." \
@@ -77,17 +77,25 @@ if "$dry_run"; then
         'Would create /opt/board/dispatch.yaml only if absent (5 worker slots, 2 projects, 3 concurrent Pi sessions).' \
         'Would prepare the configured runs directory (default /data/cairn-runs) for shared API/dispatcher access.' \
         'Would check the worker CLI and enable/start board-dispatcher.service after the API is healthy.' \
-        'Would preserve existing dispatch.yaml, code, credentials and data on reruns.'
+        'Would preserve existing dispatch.yaml, code, credentials and data on reruns.' \
+        'Would require native Board skill profiles and a stopped dispatcher on upgrades.'
     exit 0
 fi
 (( EUID == 0 )) || die 'Run this script with sudo.'
+if command -v systemctl >/dev/null && systemctl is-active --quiet board-dispatcher.service; then
+    die 'Board dispatcher is active. Finish active work and stop board-dispatcher.service before upgrading; no changes made.'
+fi
 export PATH="/usr/local/bin:$PATH:/usr/sbin:/sbin"
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-for helper in configure-board-sessions.py; do
+for helper in configure-board-sessions.py board_config.py; do
     [[ -f "$script_dir/$helper" ]] || die "Missing $helper; keep the stage helpers together."
 done
 [[ -d /run/systemd/system ]] || die 'A running systemd system is required.'
 command -v pi >/dev/null || die 'Pi is not installed. Run stage3.sh first.'
+if [[ -x /opt/board/board/.venv/bin/board ]]; then
+    /opt/board/board/.venv/bin/board skills doctor --help >/dev/null 2>&1 || \
+        die 'Existing Board lacks native skill profiles. Upgrade the application first; old adapter source patches and backups will not be rewritten by stages.'
+fi
 id "$target_user" >/dev/null 2>&1 || die "Unknown account: $target_user"
 target_home=$(getent passwd "$target_user" | cut -d: -f6)
 [[ "$target_home" =~ ^/[a-zA-Z0-9_./-]+$ && -d "$target_home" ]] || \
@@ -150,8 +158,6 @@ else
 fi
 [[ -f /opt/board/board/uv.lock && -f /opt/board/board/pyproject.toml ]] || \
     die 'Repository layout changed: expected board/pyproject.toml and board/uv.lock.'
-# Validate the session adapter patch before stopping services.
-/usr/bin/python3 "$script_dir/configure-board-sessions.py" --board-root /opt/board
 step 'Installing locked application dependencies'
 if [[ ! -x /opt/board-tools/bin/python ]]; then
     /usr/bin/python3 -m venv /opt/board-tools
@@ -178,9 +184,6 @@ as_board /opt/board-tools/bin/uv sync --frozen --no-dev \
     --project /opt/board/board --python /usr/bin/python3 || \
     die 'Application dependency installation failed. Resolve the error and rerun; any previous managed instance is stopped.'
 as_board /opt/board/board/.venv/bin/board serve --help >/dev/null
-
-step 'Configuring project transcripts'
-/usr/bin/python3 "$script_dir/configure-board-sessions.py" --board-root /opt/board --apply
 
 step 'Configuring the local dispatcher'
 if [[ ! -e "$dispatch_config" ]]; then
@@ -212,6 +215,13 @@ tasks:
 local:
   evidence_root: "/data/cairn-runs"
   completed_action: keep
+  pi_session_storage: project
+
+skills:
+  enabled: false
+  catalogs: []
+  default_profiles: [general]
+  max_metadata_tokens: 6000
 
 # Optional environment overrides for local workers, e.g. proxies:
 # common_env:
@@ -237,6 +247,11 @@ EOF
 else
     printf 'Preserving existing %s.\n' "$dispatch_config"
 fi
+step 'Validating native Board skills and persistent sessions'
+/opt/board/board/.venv/bin/python "$script_dir/configure-board-sessions.py" \
+    --board-root /opt/board --user "$target_user" --group "$board_group" --apply
+as_worker /opt/board/board/.venv/bin/board skills doctor --config "$dispatch_config" --json
+
 # Read the same configuration used by the dispatcher so the API serves evidence
 # from the correct directory, including when an existing config is reused.
 evidence_root=$(as_worker /opt/board/board/.venv/bin/python - "$dispatch_config" "http://$health_host:$port" <<'PY'

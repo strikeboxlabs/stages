@@ -57,46 +57,111 @@ Check the backend with `systemctl status hermes-backend.service`; inspect
 startup failures with `journalctl -u hermes-backend.service -n 80`.
 Use `--dry-run` on either script to preview actions.
 
-## Optional offensive/research skills
+## Local daemon setup
 
-Stages 3 and 5 no longer clone research-library or add its Board skill arguments.
-Provision it separately on the computer intended to host that library:
+Use the same existing Linux account for stages 3–5 and the optional tool-and-skill installer.
+The API has its own `board` service account; the dispatcher and Pi workers use the
+selected account and its normal `~/.pi/agent` model/auth configuration.
+
+1. Run stages 1 and 2, then stage 3 and stage 4 with `--user YOUR_ACCOUNT`.
+   Stage 3 pins Pi **1.3.0** and requires Node.js **22.19.0 or newer**. The host's
+   APT repositories supply Node; if they supply an older version, update that
+   prerequisite before continuing. npm engine checks remain enabled.
+2. Run `sudo ./stage5.sh --user YOUR_ACCOUNT`. A fresh native Board setup stores
+   sessions in `<project>/sessions/pi`, creates `dispatch.yaml`, and starts the
+   local API and dispatcher. Skills start disabled until a library is registered.
+3. Before adding/upgrading tools or libraries, finish active work and stop
+   `board-dispatcher.service`. Run the optional `install-tools.sh` described below. It
+   refuses to modify a host while its dispatcher is active and do not restart it.
+4. Check profiles and readiness under the actual dispatcher account, then start
+   the dispatcher when ready:
 
 ```sh
-sudo ./install-offensive-tools.sh --user root --dry-run
-sudo ./install-offensive-tools.sh --user root
+sudo -H -u YOUR_ACCOUNT -g board /opt/board/board/.venv/bin/board skills doctor --config /opt/board/dispatch.yaml --json
+sudo -H -u YOUR_ACCOUNT -g board /opt/board/board/.venv/bin/board skills profiles --config /opt/board/dispatch.yaml --json
+sudo systemctl start board-dispatcher.service
+```
+
+These checks are local and make no model requests. They verify configuration and
+resource access; they do not establish vulnerability-finding performance. Test
+first on a disposable host before relying on a production daemon upgrade.
+
+Stage 3 accepts an explicit future Pi upgrade through `--pi-version VERSION` or
+`PI_VERSION`; version ranges and `latest` are refused. Provider authentication
+behavior is unchanged. Before rerunning stages 3/5 or the optional tool installer, stop
+the dispatcher deliberately after active work has finished.
+
+## Upgrading older staged hosts
+
+Stages no longer rewrite Board Python source. Existing adapter patches, backups,
+credentials, evidence, and session directories are preserved. An old Board build
+without native `skills doctor` support is refused with an upgrade message.
+Update `/opt/board` to a reviewed native-profile release first, resolving old
+managed source patches in that application checkout deliberately; stage 5 does
+not pull, reset, or discard them. Then rerun stage 5 and `install-tools.sh` with the groups required by the host. Existing configs are migrated idempotently; explicit
+session storage choices and custom skill profiles/budgets are retained.
+
+The config helpers use Board's virtualenv Python/PyYAML, validate a candidate
+before publication, and create owner-only configuration backups under
+`/var/lib/stages/board-config-backups`, outside the application checkout. They preserve
+other top-level YAML sections and surrounding comments. No provider/auth file is
+edited by skill/session migration. Existing `catalog.json` files must accompany
+library checkouts; update older libraries deliberately rather than relying on an
+automatic pull.
+
+## Optional tool and skill groups
+
+Stages 3 and 5 no longer clone research-library or add its Board skill arguments.
+Use one optional installer, independently of stage 5. On Kali the default selects
+both groups; on plain Debian/Ubuntu select only `sast`:
+
+```sh
+sudo ./install-tools.sh --user YOUR_ACCOUNT --dry-run
+sudo ./install-tools.sh --user YOUR_ACCOUNT
+# Select one group explicitly:
+sudo ./install-tools.sh --groups research --user YOUR_ACCOUNT
+sudo ./install-tools.sh --groups sast --user YOUR_ACCOUNT
 ```
 
 Use the same account as the Board dispatcher. Run after stage 5 to integrate
 Board; without Board, the installer sets up Hermes/Pi links and can be rerun
-later. It clones `https://github.com/strikeboxlabs/research-library.git` into
+later. The `research` group requires Kali and clones `https://github.com/strikeboxlabs/research-library.git` into
 `/opt/research-library` and links its skills into the selected account's
 `~/.hermes/skills/research-library` and `~/.pi/agent/skills/research-library`.
 A custom `HERMES_HOME` is respected. Existing checkouts are validated and reused
 without pulling or discarding local edits; conflicting destinations are refused.
 
-When Board is present, the installer backs up and patches its local Pi argument
-builder to retain `--no-skills` and add `--skill /opt/research-library/skills`.
-Tool restrictions, model configuration and session handling are preserved.
-An active dispatcher is restarted; finish active work first. The installer
-provisions the library's skills/references/scripts and installs tools available
-as Kali packages. `kali-research-packages.py` maps skill entrypoints and shell
-command examples to the current Kali package/Contents indexes, including known
-command/package aliases. It saves a deduplicated plan and deferred skill list
-in `/var/lib/stages/offensive-packages.json`, installs with APT, and checks package
+When Board is present, the installer registers
+`/opt/research-library/catalog.json` in `dispatch.yaml`, enables curated profiles,
+and runs native Board validation as the selected dispatcher account. It preserves
+custom profile definitions, the selected default profiles, metadata budget, model
+configuration, worker tools, and session handling. A new skill configuration uses
+`general` and a 6000-token metadata budget; this is a routing budget, not a proven
+model capacity limit. Board resolves selected package directories per worker and
+passes them explicitly to Pi alongside `--no-skills`.
+
+The `research` group also installs tools available as Kali packages.
+`kali-research-packages.py` maps skill entrypoints and shell command examples to
+the current Kali package/Contents indexes, including known command/package aliases.
+It saves a deduplicated plan and deferred skill list in
+`/var/lib/stages/offensive-packages.json`, installs with APT, and checks package
 status. Tools without a resolved Kali package are deferred; no pip, gems, source
-builds, or third-party repositories are used. APT handles package dependencies
-and normal package configuration. This can install large suites and service
-packages; it does not execute the library's scanner examples.
+builds, or third-party repositories are used. APT handles package dependencies and
+normal package configuration. This can install large suites and service packages;
+it does not execute skill scanner examples. Package installation does not mean a
+skill's task prerequisites have all been verified.
 
 Dry runs read existing indexes without updating them; normal runs install
-`apt-file` and refresh the indexes first. Keep `configure-research-skills.py`,
-`configure-board-skills.py`, and `kali-research-packages.py` alongside the installer.
+`apt-file` and refresh the indexes first. Keep all Python helpers, including
+`board_config.py`, and the `lib/` directory alongside the installer. Core stages do not clone either skill
+library or install their tools. They preserve any already registered catalogs.
 
-Stage 5 independently stores Pi transcripts under `<project>/sessions/pi` using
-`configure-board-sessions.py`. All adapter helpers refuse unknown upstream method
-versions. Existing research-library checkouts, links and Board patches from older
-stage runs are preserved; moving provisioning does not uninstall them.
+Packages remain in their shared library checkouts. Hermes/Pi directory links are
+for normal interactive discovery; Board's configured catalog/profile selection is
+independent. Changing one worker's selected profile does not mutate global links
+or expose every installed package to every worker. A Linux execution host can
+carry knowledge about other target platforms; host readiness and target
+classification are separate facts.
 
 Keep stage scripts, their helpers, and reusable tests in this repository. Store
 temporary development workspaces, screenshots, audit output, and rollback backups
@@ -106,15 +171,15 @@ directories, dependencies, caches, archives, and database snapshots. Review
 
 ## SAST tool installation
 
-`install-sast-tools.sh` provisions the seven CLI tools documented by
-`/opt/sast`: Semgrep Community Edition, CodeQL (including compatible queries),
+The `sast` group in `install-tools.sh` clones/reuses the public
+`strikeboxlabs/sast` repository at `/opt/sast` and provisions its seven CLI tools: Semgrep Community Edition, CodeQL (including compatible queries),
 Bandit, gosec, Brakeman, Cppcheck, and Trivy. It is independent of stages 1–5.
 
 ```sh
-./install-sast-tools.sh --dry-run
-sudo ./install-sast-tools.sh --user root
-# A different catalogue checkout:
-sudo ./install-sast-tools.sh --repo /path/to/sast
+./install-tools.sh --groups sast --dry-run
+sudo ./install-tools.sh --groups sast --user YOUR_ACCOUNT
+# An explicitly selected existing tree (Git metadata is optional):
+sudo ./install-tools.sh --groups sast --sast-repo /path/to/sast --user YOUR_ACCOUNT
 ```
 
 Requires network access on Debian/Kali (x86-64 or ARM64). Commands are available
@@ -128,13 +193,57 @@ release directories are retained. CodeQL licensing still applies to its use.
 The installer checks executable versions and CodeQL resources, links skills into
 `~/.hermes/skills/sast` and `~/.pi/agent/skills/sast` for `--user` (defaults to
 the sudo-invoking user, otherwise the current user), and honors `HERMES_HOME`.
-It creates `/opt/sast-tools/skills` pointing to the selected checkout and adds
-`--skill /opt/sast-tools/skills` to existing Board local Pi launches while keeping
-`--no-skills` and transcript settings. Use the Board dispatcher account. An active
-dispatcher is restarted; finish active work first. Without Board, rerun after
-stage 5 to integrate it. The checkout must remain readable by the worker account.
-Conflicting skill destinations are refused; unrelated content is preserved.
+It creates `/opt/sast-tools/skills` and `/opt/sast-tools/catalog.json` symlinks to
+the selected checkout, then registers the stable catalog path in existing Board
+configuration. Board receives selected package directories through native skill
+profiles. Stop the dispatcher before provisioning, and use its account. Without
+Board, rerun after stage 5 to register the catalog. The checkout and supporting
+resources must remain readable by that account. Conflicting destinations are
+refused; unrelated content is preserved. The installer does not start work or
+restart the dispatcher.
 
 It does not run source scans, download Trivy databases, or install every
 possible application's build dependencies. Rules, databases, and project-specific
 SDKs may need additional setup when running the skills.
+
+The old `install-offensive-tools.sh` and `install-sast-tools.sh` filenames are
+compatibility aliases only. New automation should call `install-tools.sh` with
+explicit groups. Internal group implementations are not separate public installers.
+Default managed checkout origins are validated; no existing checkout is pulled or
+reset. An explicit `--sast-repo` remains an administrator-selected existing tree.
+Malformed SAST catalogs are rejected before package installation.
+
+For rollback, finish active work and stop the dispatcher. Revert the single
+relevant repository commit and restore the appropriate pre-migration `dispatch.yaml`
+from `/var/lib/stages/board-config-backups`, preserving its original owner and mode.
+An older Board version rejects native configuration fields, so restore its matching
+configuration too. Retain project data and sessions; rollback does not delete the
+database or evidence. No automatic rollback is performed.
+
+## Validation
+
+Run fixture tests on Linux using a Python environment with PyYAML (Board's venv
+already has it): `python3 -m unittest discover -s tests -v`. Tests do not call a
+model or execute source-analysis scans. Installer planning fixtures use `--dry-run`;
+symlink, ownership, and shell-wrapper behavior require Linux.
+
+For the native-profile change, **16 tests passed** on the Windows authoring host:
+12 configuration fixtures and four integrations using the actual native Board CLI
+in subprocesses. Synthetic local catalogs covered disabled loading, registering
+both libraries, session migration, profile summaries, invalid catalog rejection,
+and missing packages. No doctor/native command was mocked in those integrations.
+All eight shell scripts also passed `bash -n`. Fixture coverage includes YAML/config
+preservation, idempotence, validation-before-publication, dispatcher identity
+arguments, rejected legacy builds, and concurrent-edit protection.
+The Debian/Kali staging process, systemd services, tool installs, real Pi discovery,
+and resumed worker behavior still require a disposable Linux host validation pass.
+
+CLI integration tests require native-profile Board installed in the test Python
+environment. They invoke its console entrypoint (`from board.cli import main`);
+Board currently has no `board.__main__` module for `python -m board`.
+
+Unified-installer validation: three portable checkout/catalog fixtures passed on
+the Windows authoring host; three shell planning fixtures require Linux and were
+skipped there. All eleven root/internal shell files passed `bash -n`. The Linux
+CI job runs all selected-group planning and compatibility-alias cases without
+executing installation branches or scanners.

@@ -1,5 +1,6 @@
 """Exercise installer preflight without network calls or system writes."""
 from pathlib import Path
+import json
 import subprocess
 import tempfile
 import unittest
@@ -13,6 +14,8 @@ class SastInstaller(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.repo = Path(self.temp.name)
+        (self.repo / 'catalog.json').write_text(json.dumps({'schema_version': 1, 'library_id': 'sast', 'skills': [
+            {'id': tool, 'path': 'skills/' + tool, 'tags': [], 'requires': []} for tool in TOOLS]}))
         for tool in TOOLS:
             directory = self.repo / 'skills' / tool
             directory.mkdir(parents=True)
@@ -42,9 +45,11 @@ class SastInstaller(unittest.TestCase):
         (self.repo / 'skills/codeql/SKILL.md').unlink()
         result = self.run_installer('--dry-run')
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn('Missing expected skill: codeql', result.stderr)
+        self.assertIn('Missing', result.stderr)
+        self.assertIn('codeql', result.stderr)
 
     def test_invalid_option_fails_before_installation(self):
         result = self.run_installer('--oops')
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn('Unknown argument', result.stderr)
+        self.assertIn('Unknown', result.stderr)
+        self.assertIn('--oops', result.stderr)
