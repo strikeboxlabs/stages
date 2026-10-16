@@ -71,6 +71,32 @@ commands=(codex pi claude)
 npm_prefix=/usr/local
 npm_flags=(--global --prefix "$npm_prefix" --engine-strict --include=optional)
 hermes_installer_url=https://hermes-agent.nousresearch.com/install.sh
+hermes_installer_fallback_url=https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh
+
+install_hermes() (
+    # Keep the download private, and never execute a partial HTTP response.
+    local installer url downloaded=false
+    installer=$(mktemp) || return 1
+    trap 'rm -f -- "$installer"' EXIT
+    for url in "$hermes_installer_url" "$hermes_installer_fallback_url"; do
+        printf '[stage3] Downloading Hermes installer: %s\n' "$url"
+        if curl --fail --silent --show-error --location \
+            --connect-timeout 15 --max-time 60 \
+            --retry 2 --retry-max-time 45 \
+            --output "$installer" "$url"; then
+            downloaded=true
+            break
+        fi
+        printf '[stage3] Download failed; trying the next official source if available.\n' >&2
+    done
+    "$downloaded" || { printf 'Hermes installer download failed from both official sources (HTTP 429 indicates rate limiting).\n' >&2; return 1; }
+    [[ -s "$installer" ]] && bash -n "$installer" || {
+        printf 'Hermes installer is empty or has invalid Bash syntax; refusing to execute it.\n' >&2
+        return 1
+    }
+    # Root opens the private file; the selected account executes its contents.
+    as_agent env HERMES_INSTALL_DIR="$hermes_root" bash -s -- --skip-setup < "$installer"
+)
 
 if "$dry_run"; then
     printf '[stage3] Requires Node.js 22.19+ and npm from stage2.sh. Would run:\n'
@@ -84,7 +110,8 @@ if "$dry_run"; then
         printf '\n'
     done
     printf 'Then verify /usr/local/bin/{codex,pi,claude} with --version.\n'
-    printf 'curl -fsSL %q | bash -s -- --skip-setup\n' "$hermes_installer_url"
+    printf 'Download %s with retries; fall back to %s.\n' "$hermes_installer_url" "$hermes_installer_fallback_url"
+    printf 'Validate the complete installer, then run as the selected user with bash -s -- --skip-setup.\n'
     printf 'Install Hermes as %s and publish its launcher at /usr/local/bin/hermes.\n' "$target_user"
     printf 'Prompt separately for the Hermes model/API key and the Pi model/API key.\n'
     printf 'Each agent can use Abliteration.ai Large v2, Z.ai GLM-5.3, or DeepSeek Flash (Max) independently.\n'
@@ -146,8 +173,8 @@ done
 step 'Installing Nous Hermes Agent'
 # Download as root, but install with the selected account's HOME and ownership.
 # Configuration is performed below, in this stage, after the installer finishes.
-curl -fsSL "$hermes_installer_url" | as_agent env HERMES_INSTALL_DIR="$hermes_root" bash -s -- --skip-setup || \
-    die 'Hermes download or installation failed. Fix the installer error above and rerun stage3.sh.'
+install_hermes || \
+    die 'Hermes download or installation failed. See the download or installer error above, then rerun stage3.sh. Earlier successful npm installations remain in place.'
 init_hermes_runtime
 step 'Publishing and verifying Hermes Agent'
 as_agent "$hermes_cli" --version || die 'Hermes could not start.'

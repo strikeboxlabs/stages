@@ -2,9 +2,57 @@
 import os
 from pathlib import Path
 import subprocess
+import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+class HermesDownload(unittest.TestCase):
+    def run_download(self, mode):
+        source = (ROOT / 'stage3.sh').read_text()
+        start = source.index('hermes_installer_url=')
+        end = source.index('\nif "$dry_run";', start)
+        fixture = r'''
+hermes_root=/unused
+calls=0
+curl() {
+    calls=$((calls + 1))
+    local output
+    while (( $# )); do
+        if [[ "$1" == --output ]]; then output=$2; shift; fi
+        shift
+    done
+    printf 'echo PARTIAL_MUST_NOT_RUN\n' > "$output"
+    if [[ "$MODE" == fail || "$calls" == 1 ]]; then return 22; fi
+    if [[ "$MODE" == invalid ]]; then printf 'if\n' > "$output"; return 0; fi
+    printf 'echo INSTALLER_RAN "$@"\n' > "$output"
+}
+as_agent() { "$@"; }
+install_hermes
+'''
+        with tempfile.TemporaryDirectory() as tmp:
+            result = subprocess.run(
+                ['bash', '-c', source[start:end] + fixture],
+                env={**os.environ, 'TMPDIR': tmp, 'MODE': mode},
+                capture_output=True, text=True, timeout=10)
+            self.assertEqual(list(Path(tmp).iterdir()), [])
+            return result
+
+    def test_failed_primary_uses_official_fallback(self):
+        result = self.run_download('fallback')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('raw.githubusercontent.com/NousResearch/hermes-agent', result.stdout)
+        self.assertIn('INSTALLER_RAN --skip-setup', result.stdout)
+        self.assertNotIn('PARTIAL_MUST_NOT_RUN', result.stdout)
+
+    def test_failed_or_invalid_download_is_never_executed(self):
+        for mode in ['fail', 'invalid']:
+            with self.subTest(mode=mode):
+                result = self.run_download(mode)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertNotIn('INSTALLER_RAN', result.stdout)
+                self.assertNotIn('PARTIAL_MUST_NOT_RUN', result.stdout)
 
 
 @unittest.skipUnless(os.name == 'posix', 'Stage shell planning fixtures require Linux')
