@@ -27,7 +27,7 @@ launchers are preserved by refusing collisions. Reruns upgrade managed tools.
 Old release directories remain available; interrupted downloads stay unpublished.
 GitHub asset SHA256 digests are checked when supplied by the release API.
 Links skills into Hermes/Pi and configures existing Board local Pi workers.
-Stop the Board dispatcher before installation; active workers are never interrupted. Without Board,
+The public install-tools.sh entry point manages dispatcher stop and restoration. Without Board,
 rerun after stage5.sh to integrate it. Honors HERMES_HOME. No scans are run.
 Rules and Trivy databases may require additional downloads at scan time.
 CodeQL use is subject to GitHub's CodeQL terms and applicable licensing.
@@ -221,7 +221,7 @@ if "$board_present"; then
     doctor_identity=(--user "$target_user" --group "$dispatcher_group")
     /opt/board/board/.venv/bin/python "$script_dir/configure-board-skills.py" --board-root /opt/board \
         --skills-dir "$root/skills" "${doctor_identity[@]}" --apply
-    printf 'Board catalog configured. Start board-dispatcher.service when ready; existing sessions were preserved.\n'
+    printf 'Board catalog configured; existing sessions were preserved.\n'
 else
     printf 'Board is absent; rerun after stage5.sh to integrate its workers.\n'
 fi

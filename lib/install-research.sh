@@ -17,7 +17,7 @@ If Board is installed at /opt/board, register the installed catalog in dispatch.
 for curated skill-profile selection. Board owns its Pi launch arguments.
 Run after stage5.sh with its dispatcher account to integrate Board. If Board is
 absent, installs agent links only; rerun after Board is installed.
-Finish active work and stop the dispatcher before provisioning. It is not restarted.
+The public install-tools.sh entry point manages dispatcher stop and restoration.
 
 This extracts the research-library provisioning from stages 3 and 5. It installs
 skills plus tools available as packages in the configured Kali repositories.
@@ -70,7 +70,7 @@ if "$dry_run"; then
     fi
     if "$board_present"; then
         printf 'Would register /opt/research-library/catalog.json for native Board curated skill profiles.\n'
-        printf 'Would verify the dispatcher account; active dispatchers must be stopped before provisioning.\n'
+        printf 'Would verify the dispatcher account; install-tools.sh manages dispatcher maintenance.\n'
     else
         printf 'Board is absent; rerun this installer after stage5.sh for Board integration.\n'
     fi
@@ -109,6 +109,6 @@ if "$board_present"; then
     doctor_identity=(--user "$target_user" --group "$dispatcher_group")
     /opt/board/board/.venv/bin/python "$script_dir/configure-board-skills.py" --board-root /opt/board \
         "${doctor_identity[@]}" --apply
-    printf 'Board catalog configured. Start board-dispatcher.service when ready; existing sessions were preserved.\n'
+    printf 'Board catalog configured; existing sessions were preserved.\n'
 fi
 printf '\nResearch-library skills and available Kali tool packages installed for %s.\n' "$target_user"

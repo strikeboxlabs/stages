@@ -75,7 +75,9 @@ class UnifiedInstallerPlanning(unittest.TestCase):
         self.environment = dict(os.environ, HERMES_HOME=str(self.root / 'hermes'))
         fake = self.root / 'fake-commands.sh'
         fake.write_text(''.join(command + '() { printf forbidden >> "$MUTATION_LOG"; return 91; }\n'
-                                for command in ['apt-get', 'git', 'runuser', 'npm', 'pip', 'ln', 'chown', 'chmod']))
+                                for command in ['apt-get', 'git', 'runuser', 'npm', 'pip', 'ln', 'chown', 'chmod']) +
+                        'systemctl() { case "$1" in show) return 0 ;; is-active) return 1 ;; '
+                        '*) printf forbidden >> "$MUTATION_LOG"; return 91 ;; esac; }\n')
         self.environment.update(BASH_ENV=str(fake), MUTATION_LOG=str(self.log))
 
     def run_installer(self, *arguments, legacy=False):

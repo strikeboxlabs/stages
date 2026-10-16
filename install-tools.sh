@@ -18,8 +18,9 @@ from stage5.sh. Default groups: research,sast (Kali). On plain Debian/Ubuntu sel
 
 Default checkouts are cloned once from public strikeboxlabs repositories; existing
 revisions/edits are preserved without pulling. Explicit SAST trees need no Git metadata.
-Stop the dispatcher after active work finishes. Provisioning never restarts it or
-executes scanners. Provider authentication and stage5 remain independent.
+An active dispatcher is stopped during provisioning and restored on exit, including
+installation failures and interrupts. An inactive dispatcher stays inactive.
+Provisioning never executes scanners. Provider authentication and stage5 remain independent.
 HELP
 }
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
@@ -59,15 +60,13 @@ if "$research"; then
 fi
 if ! "$dry_run"; then
     (( EUID == 0 )) || die 'Run as root or with sudo.'
-    if command -v systemctl >/dev/null && systemctl is-active --quiet board-dispatcher.service; then
-        die 'Board dispatcher is active. Finish active work and stop it before provisioning; no changes made.'
-    fi
 fi
 for helper in configure-sast-checkout.py configure-research-skills.py configure-sast-skills.py configure-board-skills.py board_config.py; do
     [[ -f "$script_dir/$helper" ]] || die "Missing helper: $helper"
 done
 if "$research"; then [[ -f "$script_dir/lib/install-research.sh" ]] || die 'Missing internal research module.'; fi
 if "$sast"; then [[ -f "$script_dir/lib/install-sast.sh" ]] || die 'Missing internal SAST module.'; fi
+[[ -f "$script_dir/lib/dispatcher-maintenance.sh" ]] || die 'Missing dispatcher maintenance helper.'
 if [[ -f /opt/board/board/src/board/dispatcher/workers/adapters/pi.py ]]; then
     [[ -x /opt/board/board/.venv/bin/python ]] || die 'Run stage5.sh after updating Board to native skill profiles.'
     /opt/board/board/.venv/bin/python "$script_dir/configure-board-skills.py" --check-native
@@ -86,6 +85,7 @@ if "$sast"; then
     python3 "$script_dir/configure-sast-checkout.py" "${sast_arguments[@]}"
 fi
 if "$dry_run"; then
+    printf 'Would temporarily stop an active Board dispatcher and restore it on exit; an inactive dispatcher stays inactive.\n'
     if "$research"; then bash "$script_dir/lib/install-research.sh" --user "$target_user" --dry-run; fi
     if "$sast"; then
         if [[ -f "$sast_repo/catalog.json" ]]; then
@@ -96,6 +96,13 @@ if "$dry_run"; then
     fi
     exit 0
 fi
+# Serialize provisioning so another invocation cannot install while we restore.
+command -v flock >/dev/null || die 'Missing flock; install util-linux first.'
+exec 9>/run/lock/stages-install-tools.lock
+flock -n 9 || die 'Another tool installation is running.'
+# shellcheck source=lib/dispatcher-maintenance.sh
+source "$script_dir/lib/dispatcher-maintenance.sh"
+pause_dispatcher || die 'Could not stop Board dispatcher; provisioning aborted.'
 # Prepare absent SAST source before any package installation; never pull existing trees.
 if "$sast"; then python3 "$script_dir/configure-sast-checkout.py" "${sast_arguments[@]}" --apply; fi
 # Read-only group preflights happen before either group installs packages.
@@ -103,4 +110,4 @@ if "$research"; then bash "$script_dir/lib/install-research.sh" --user "$target_
 if "$sast"; then bash "$script_dir/lib/install-sast.sh" --user "$target_user" --repo "$sast_repo" --dry-run; fi
 if "$research"; then bash "$script_dir/lib/install-research.sh" --user "$target_user"; fi
 if "$sast"; then bash "$script_dir/lib/install-sast.sh" --user "$target_user" --repo "$sast_repo"; fi
-printf 'Selected tools and skills provisioned. Start the dispatcher explicitly when ready.\n'
+printf 'Selected tools and skills provisioned.\n'

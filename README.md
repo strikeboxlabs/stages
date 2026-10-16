@@ -125,7 +125,10 @@ sudo ./install-tools.sh --groups sast --user YOUR_ACCOUNT
 
 Use the same account as the Board dispatcher. Run after stage 5 to integrate
 Board; without Board, the installer sets up Hermes/Pi links and can be rerun
-later. The `research` group requires Kali and clones `https://github.com/strikeboxlabs/research-library.git` into
+later. An active `board-dispatcher.service` is stopped during provisioning and
+started again on exit, including failures, Ctrl-C and termination. A dispatcher
+that was inactive stays inactive. Dry runs leave the service untouched. Concurrent
+installations are refused. The `research` group requires Kali and clones `https://github.com/strikeboxlabs/research-library.git` into
 `/opt/research-library` and links its skills into the selected account's
 `~/.hermes/skills/research-library` and `~/.pi/agent/skills/research-library`.
 A custom `HERMES_HOME` is respected. Existing checkouts are validated and reused
@@ -196,11 +199,11 @@ the sudo-invoking user, otherwise the current user), and honors `HERMES_HOME`.
 It creates `/opt/sast-tools/skills` and `/opt/sast-tools/catalog.json` symlinks to
 the selected checkout, then registers the stable catalog path in existing Board
 configuration. Board receives selected package directories through native skill
-profiles. Stop the dispatcher before provisioning, and use its account. Without
+profiles. Use the dispatcher account when provisioning. Without
 Board, rerun after stage 5 to register the catalog. The checkout and supporting
 resources must remain readable by that account. Conflicting destinations are
-refused; unrelated content is preserved. The installer does not start work or
-restart the dispatcher.
+refused; unrelated content is preserved. Restoring the dispatcher can resume its
+existing projects. SIGKILL or power loss prevents automatic service restoration.
 
 It does not run source scans, download Trivy databases, or install every
 possible application's build dependencies. Rules, databases, and project-specific
