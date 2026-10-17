@@ -20,7 +20,7 @@ absent, installs agent links only; rerun after Board is installed.
 The public install-tools.sh entry point manages dispatcher stop and restoration.
 
 This extracts the research-library provisioning from stages 3 and 5. It installs
-skills plus tools available as packages in the configured Kali repositories.
+skills plus SecLists wordlists and tools available as Kali packages.
 Tools without a resolvable Kali package are listed for later; no source builds
 or alternate package managers are used. Requires Kali with APT Contents indexes.
 Starting the dispatcher later can resume its existing active projects.
@@ -62,7 +62,7 @@ if [[ -e "$board_adapter" ]]; then
 fi
 python3 "$script_dir/configure-research-skills.py" --user "$target_user" --hermes-home "$hermes_home"
 if "$dry_run"; then
-    printf 'Would install git, Python and CA certificates, then clone/reuse /opt/research-library and link Hermes and Pi skills for %s.\n' "$target_user"
+    printf 'Would install git, Python, CA certificates and SecLists wordlists (/usr/share/seclists), then clone/reuse /opt/research-library and link Hermes and Pi skills for %s.\n' "$target_user"
     if [[ -d /opt/research-library/skills ]]; then
         /usr/bin/python3 "$script_dir/kali-research-packages.py"
     else
@@ -79,7 +79,7 @@ fi
 if ! "$dry_run"; then
     (( EUID == 0 )) || die 'Run as root or with sudo.'
     apt-get update
-    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends git python3 python3-apt apt-file ca-certificates util-linux
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends git python3 python3-apt apt-file ca-certificates util-linux seclists
     apt-file update
 fi
 python3 "$script_dir/configure-research-skills.py" --user "$target_user" --hermes-home "$hermes_home" --apply

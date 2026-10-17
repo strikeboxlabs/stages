@@ -143,7 +143,8 @@ configuration, worker tools, and session handling. A new skill configuration use
 model capacity limit. Board resolves selected package directories per worker and
 passes them explicitly to Pi alongside `--no-skills`.
 
-The `research` group also installs tools available as Kali packages.
+The `research` group also installs SecLists wordlists at `/usr/share/seclists`
+and tools available as Kali packages.
 `kali-research-packages.py` maps skill entrypoints and shell command examples to
 the current Kali package/Contents indexes, including known command/package aliases.
 It saves a deduplicated plan and deferred skill list in

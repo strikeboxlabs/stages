@@ -8,7 +8,8 @@ Usage: sudo ./install-tools.sh [--groups research,sast] [--user USER] [--sast-re
 
 Provision tools, independent skill packages and native Board catalogs separately
 from stage5.sh. Default groups: research,sast (Kali). On plain Debian/Ubuntu select
---groups sast. The research group requires Kali and its APT package indexes.
+--groups sast. The research group includes SecLists wordlists and requires Kali
+and its APT package indexes.
 
   --groups LIST     Comma-separated research and/or sast; default both.
   --user USER       Actual Board dispatcher/Hermes/Pi account (sudo user by default).
