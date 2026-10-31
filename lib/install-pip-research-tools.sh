@@ -196,6 +196,26 @@ elif [[ -x /usr/share/memcached/scripts/memcached-tool ]]; then
         && installed+=("memcached-tool(path)") || failed+=("memcached-tool (symlink)")
 fi
 
+# --- 11. REA reverse-engineering orchestration (npm CLI + /opt/rea checkout)
+if have rea; then
+    skipped+=("rea")
+else
+    if have node && have npm; then
+        npm install --global --allow-scripts=frida rea-agents >/dev/null 2>&1 \
+            && have rea && installed+=("rea") || failed+=("rea (npm)")
+    else
+        failed+=("rea (no node/npm)")
+    fi
+fi
+if [[ -d /opt/rea/.git ]]; then
+    skipped+=("rea-checkout")
+else
+    git clone -q --depth 1 https://github.com/morluto/rea /opt/rea \
+        && installed+=("rea-checkout") || failed+=("rea-checkout (clone)")
+fi
+# Empirical: node 24.21.0 runs rea 6.7.0 despite the documented 24.22.1 floor.
+# Ghidra/JADX providers arrive through the APT resolver via their skill entries.
+
 # --- summary
 printf '\nResearch pip/git tools: %s installed, %s already present, %s failed.\n' \
     "${#installed[@]}" "${#skipped[@]}" "${#failed[@]}"
