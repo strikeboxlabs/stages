@@ -265,7 +265,7 @@ workers:
   - name: "local-pi"
     type: "pi"
     task_types: $pi_task_types
-    max_running: 3
+    max_running: 6
     priority: 0
 $claude_worker_block
   # - name: "local-codex"
