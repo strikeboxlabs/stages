@@ -215,6 +215,29 @@ else
 fi
 # Empirical: node 24.21.0 runs rea 6.7.0 despite the documented 24.22.1 floor.
 # Ghidra/JADX providers arrive through the APT resolver via their skill entries.
+# MCP: stdio server via the installed CLI (`rea mcp`; `rea mcp doctor` validates).
+# Interactive registration into Hermes for the staging account:
+rea_user="${target_user:-root}"
+rea_home=$(getent passwd "$rea_user" | cut -d: -f6)
+if [[ -f "$rea_home/.hermes/config.yaml" ]] && command -v hermes >/dev/null 2>&1; then
+    if [[ -t 0 ]]; then
+        printf 'Register the REA MCP server into Hermes for %s? [y/N] ' "$rea_user"
+        read -r rea_answer
+        case "$rea_answer" in
+            y|Y|yes|YES)
+                if runuser -u "$rea_user" -- hermes config set mcp_servers.rea.command /usr/local/bin/rea \
+                   && runuser -u "$rea_user" -- hermes config set mcp_servers.rea.args '["mcp"]'; then
+                    printf 'REA MCP registered for %s; restart Hermes to load it.\n' "$rea_user"
+                else
+                    printf 'Warning: Hermes MCP registration failed; register manually with: hermes config set mcp_servers.rea.command /usr/local/bin/rea\n'
+                fi
+                ;;
+            *) printf 'Skipped REA MCP registration.\n' ;;
+        esac
+    else
+        printf 'Note: non-interactive shell; register REA MCP manually with hermes config set (mcp_servers.rea.command=/usr/local/bin/rea, mcp_servers.rea.args=[mcp]).\n'
+    fi
+fi
 
 # --- summary
 printf '\nResearch pip/git tools: %s installed, %s already present, %s failed.\n' \

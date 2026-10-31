@@ -110,7 +110,7 @@ for package in "${packages[@]}"; do
 done
 /usr/bin/python3 -c 'import json; p=json.load(open("/var/lib/stages/offensive-packages.json")); print("Deferred skill tools without a resolved Kali package:\n" + "\n".join(p["deferred"]))'
 printf '\nProvisioning deferred skill tools via pipx / upstream sources...\n'
-bash "$script_dir/lib/install-pip-research-tools.sh"
+target_user="$target_user" bash "$script_dir/lib/install-pip-research-tools.sh"
 if "$board_present"; then
     dispatcher_group=$(id -gn "$target_user")
     if [[ -d /run/systemd/system ]]; then
