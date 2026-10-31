@@ -215,7 +215,12 @@ if [[ "$worker_split" == split ]]; then
     max_running: 2
     priority: 0
     env:
-      CLAUDE_MODEL: "claude-opus-4-6"
+      # The claude CLI honors ANTHROPIC_MODEL (CLAUDE_MODEL is ignored in 2.1.x).
+      ANTHROPIC_MODEL: "claude-opus-4-6"
+      # Refusal fallback would re-bill a different model; fail instead and let Board retry.
+      CLAUDE_CODE_DISABLE_REFUSAL_FALLBACK: "1"
+      # Required for --dangerously-skip-permissions when the dispatcher runs as root.
+      IS_SANDBOX: "1"
 '
     printf 'Claude Code reasoning worker: run "claude" once as %s to authenticate before the first reason task.\n' "$target_user"
 fi
