@@ -176,7 +176,12 @@ without pulling or discarding local edits; conflicting destinations are refused.
 
 When Board is present, the installer registers
 `/opt/research-library/catalog.json` in `dispatch.yaml`, enables curated profiles,
-and runs native Board validation as the selected dispatcher account. It preserves
+and runs native Board validation as the selected dispatcher account. Stage 5 seeds
+eight tag-based offensive profiles (recon, network-access, ad-offense,
+credential-access, web-offense, reverse-engineering, traffic-analysis,
+cloud-container) mapping the research library's reviewed `task:` facets; they
+resolve empty and stay hidden from the planner until a matching catalog is
+registered. It preserves
 custom profile definitions, the selected default profiles, metadata budget, model
 configuration, worker tools, and session handling. A new skill configuration uses
 `general` and a 6000-token metadata budget; this is a routing budget, not a proven

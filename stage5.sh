@@ -261,6 +261,34 @@ skills:
   catalogs: []
   default_profiles: [general]
   max_metadata_tokens: 6000
+  # Tag-based profiles over the research library's reviewed task facets. They
+  # resolve empty (and are not offered to the planner) until install-tools.sh
+  # registers a matching catalog, so they are safe to seed before provisioning.
+  profiles:
+    recon:
+      description: Discover live hosts, services and external assets for in-scope targets.
+      tags: ["task:service-discovery", "task:asset-discovery", "task:recon-pipeline"]
+    network-access:
+      description: Access hosts over SMB/SSH/RPC and enumerate or use shares and remote execution.
+      tags: ["task:share-enumeration", "task:remote-access", "task:remote-execution"]
+    ad-offense:
+      description: Attack and enumerate Active Directory, Kerberos and LDAP services.
+      tags: ["task:ad-attack", "task:ad-enumeration"]
+    credential-access:
+      description: Crack, dump, recover and test credentials offline and online.
+      tags: ["task:offline-cracking", "task:credential-recovery", "task:authentication-testing"]
+    web-offense:
+      description: Test web applications for content discovery, injection and app-specific attacks.
+      tags: ["task:web-enumeration", "task:web-app-testing"]
+    reverse-engineering:
+      description: Reverse engineer binaries, APKs and managed code, and develop exploits.
+      tags: ["task:reverse-engineering", "task:symbolic-execution"]
+    traffic-analysis:
+      description: Capture and analyze network traffic for credentials and behavior.
+      tags: ["task:traffic-capture"]
+    cloud-container:
+      description: Attack and audit cloud accounts, Kubernetes clusters and container runtimes.
+      tags: ["task:cloud-security", "task:container-security"]
 
 # Optional environment overrides for local workers, e.g. proxies:
 # common_env:
