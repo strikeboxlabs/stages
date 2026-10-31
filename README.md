@@ -236,7 +236,8 @@ release directories are retained. CodeQL licensing still applies to its use.
 
 The installer checks executable versions and CodeQL resources, links skills into
 `~/.hermes/skills/sast` and `~/.pi/agent/skills/sast` for `--user` (defaults to
-the sudo-invoking user, otherwise the current user), and honors `HERMES_HOME`.
+the sudo-invoking user, otherwise the current user), and honors `HERMES_HOME`,
+`PI_CODING_AGENT_DIR` and `SAST_TOOLS_ROOT`.
 It creates `/opt/sast-tools/skills` and `/opt/sast-tools/catalog.json` symlinks to
 the selected checkout, then registers the stable catalog path in existing Board
 configuration. Board receives selected package directories through native skill

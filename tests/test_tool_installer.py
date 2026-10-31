@@ -72,7 +72,9 @@ class UnifiedInstallerPlanning(unittest.TestCase):
         self.repo = self.root / 'sast'
         fixture_catalog(self.repo)
         self.log = self.root / 'forbidden-mutations'
-        self.environment = dict(os.environ, HERMES_HOME=str(self.root / 'hermes'))
+        self.environment = dict(os.environ, HERMES_HOME=str(self.root / 'hermes'),
+                                PI_CODING_AGENT_DIR=str(self.root / 'pi-agent'),
+                                SAST_TOOLS_ROOT=str(self.root / 'tools-root'))
         fake = self.root / 'fake-commands.sh'
         fake.write_text(''.join(command + '() { printf forbidden >> "$MUTATION_LOG"; return 91; }\n'
                                 for command in ['apt-get', 'git', 'runuser', 'npm', 'pip', 'ln', 'chown', 'chmod']) +

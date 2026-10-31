@@ -9,7 +9,7 @@ import runpy
 HELPERS = runpy.run_path(str(Path(__file__).with_name('configure-research-skills.py')))
 
 
-def configure(repo, user, hermes_home=None, tools_root=Path('/opt/sast-tools'), apply=False):
+def configure(repo, user, hermes_home=None, pi_agent_dir=None, tools_root=None, apply=False):
     account = pwd.getpwnam(user)
     target = repo.resolve() / 'skills'
     if not target.is_dir() or not any(target.glob('*/SKILL.md')):
@@ -19,10 +19,12 @@ def configure(repo, user, hermes_home=None, tools_root=Path('/opt/sast-tools'), 
         raise ValueError(f'Missing SAST catalog: {catalog}; update the selected checkout first.')
     home = Path(account.pw_dir)
     hermes_home = Path(hermes_home) if hermes_home else home / '.hermes'
-    if not hermes_home.is_absolute():
-        raise ValueError('HERMES_HOME must be absolute.')
+    pi_agent_dir = Path(pi_agent_dir) if pi_agent_dir else home / '.pi/agent'
+    tools_root = Path(tools_root) if tools_root else Path('/opt/sast-tools')
+    if not hermes_home.is_absolute() or not pi_agent_dir.is_absolute() or not tools_root.is_absolute():
+        raise ValueError('HERMES_HOME, PI_CODING_AGENT_DIR and SAST_TOOLS_ROOT must be absolute.')
     links = [(hermes_home / 'skills/sast', target),
-             (home / '.pi/agent/skills/sast', target),
+             (pi_agent_dir / 'skills/sast', target),
              (tools_root / 'skills', target), (tools_root / 'catalog.json', catalog)]
     for link, destination in links:
         HELPERS['validate_link'](link, destination)
@@ -40,9 +42,11 @@ if __name__ == '__main__':
     parser.add_argument('--repo', type=Path, required=True)
     parser.add_argument('--user', required=True)
     parser.add_argument('--hermes-home', type=Path)
+    parser.add_argument('--pi-agent-dir', type=Path)
+    parser.add_argument('--tools-root', type=Path)
     parser.add_argument('--apply', action='store_true')
     args = parser.parse_args()
     try:
-        configure(args.repo, args.user, args.hermes_home, apply=args.apply)
+        configure(args.repo, args.user, args.hermes_home, args.pi_agent_dir, args.tools_root, apply=args.apply)
     except (ValueError, OSError, KeyError) as exc:
         raise SystemExit(f'Cannot link SAST skills: {exc}') from exc

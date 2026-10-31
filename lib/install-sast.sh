@@ -28,7 +28,8 @@ Old release directories remain available; interrupted downloads stay unpublished
 GitHub asset SHA256 digests are checked when supplied by the release API.
 Links skills into Hermes/Pi and configures existing Board local Pi workers.
 The public install-tools.sh entry point manages dispatcher stop and restoration. Without Board,
-rerun after stage5.sh to integrate it. Honors HERMES_HOME. No scans are run.
+rerun after stage5.sh to integrate it. Honors HERMES_HOME, PI_CODING_AGENT_DIR and
+SAST_TOOLS_ROOT. No scans are run.
 Rules and Trivy databases may require additional downloads at scan time.
 CodeQL use is subject to GitHub's CodeQL terms and applicable licensing.
 Project-specific SDKs/build dependencies are outside this installer.
@@ -61,7 +62,7 @@ case $(uname -m) in
     aarch64|arm64) trivy_arch=ARM64; codeql_platform=linux-arm64 ;;
     *) die 'Supported architectures: x86-64 and ARM64.' ;;
 esac
-root=/opt/sast-tools
+root=${SAST_TOOLS_ROOT:-/opt/sast-tools}
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 for helper in configure-sast-skills.py configure-research-skills.py configure-board-skills.py board_config.py; do
     [[ -f "$script_dir/$helper" ]] || die "Missing $helper; keep helpers together."
@@ -70,7 +71,9 @@ done
 id "$target_user" >/dev/null 2>&1 || die "Unknown account: $target_user"
 target_home=$(getent passwd "$target_user" | cut -d: -f6)
 hermes_home=${HERMES_HOME:-$target_home/.hermes}
-python3 "$script_dir/configure-sast-skills.py" --repo "$repo" --user "$target_user" --hermes-home "$hermes_home"
+pi_agent_dir=${PI_CODING_AGENT_DIR:-$target_home/.pi/agent}
+python3 "$script_dir/configure-sast-skills.py" --repo "$repo" --user "$target_user" \
+    --hermes-home "$hermes_home" --pi-agent-dir "$pi_agent_dir" --tools-root "$root"
 board_present=false
 if [[ -f /opt/board/board/src/board/dispatcher/workers/adapters/pi.py ]]; then
     board_present=true
@@ -202,7 +205,8 @@ codeql resolve qlpacks
 printf '\nAll seven SAST CLIs installed. Project builds, rules and scanner data may need further dependencies/network access.\n'
 
 step 'Linking SAST skills and configuring Board workers'
-python3 "$script_dir/configure-sast-skills.py" --repo "$repo" --user "$target_user" --hermes-home "$hermes_home" --apply
+python3 "$script_dir/configure-sast-skills.py" --repo "$repo" --user "$target_user" \
+    --hermes-home "$hermes_home" --pi-agent-dir "$pi_agent_dir" --tools-root "$root" --apply
 for skill in "$repo"/skills/*/SKILL.md; do
     runuser -u "$target_user" -- test -r "$skill"
 done

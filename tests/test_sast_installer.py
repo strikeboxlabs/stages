@@ -1,4 +1,5 @@
 """Exercise installer preflight without network calls or system writes."""
+import os
 from pathlib import Path
 import json
 import subprocess
@@ -22,8 +23,13 @@ class SastInstaller(unittest.TestCase):
             (directory / 'SKILL.md').write_text('Test catalogue entry\n')
 
     def run_installer(self, *args):
+        # Isolate every skill destination the real deployment may already own.
+        environment = dict(os.environ,
+                           HERMES_HOME=str(self.repo.parent / 'hermes-home'),
+                           PI_CODING_AGENT_DIR=str(self.repo.parent / 'pi-agent'),
+                           SAST_TOOLS_ROOT=str(self.repo.parent / 'tools-root'))
         return subprocess.run(['bash', str(SCRIPT), '--repo', str(self.repo), *args],
-                              capture_output=True, text=True, timeout=10)
+                              env=environment, capture_output=True, text=True, timeout=10)
 
     def test_dry_run_covers_catalogue_without_changing_it(self):
         before = sorted(p.relative_to(self.repo) for p in self.repo.rglob('*'))
