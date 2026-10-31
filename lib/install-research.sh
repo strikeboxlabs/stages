@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Optional research-library checkout and agent/Board skill integration.
 set -Eeuo pipefail
-trap 'rc=$?; printf "Error [install-offensive-tools]: line %s failed (exit %s).\n" "$LINENO" "$rc" >&2; exit "$rc"' ERR
+trap 'rc=$?; printf "Error [install-research]: line %s failed (exit %s).\n" "$LINENO" "$rc" >&2; exit "$rc"' ERR
 die() { printf 'Error: %s\n' "$*" >&2; exit 1; }
 usage() {
     cat <<'HELP'
@@ -46,7 +46,7 @@ hermes_home=${HERMES_HOME:-$target_home/.hermes}
 # Install these even when the skill library does not reference their commands.
 required_packages=(
     git python3 python3-apt apt-file ca-certificates util-linux seclists
-    python3-certipy impacket-scripts python3-pwntools python3-ropgadget
+    certipy-ad impacket-scripts python3-pwntools python3-ropgadget
     procyon-decompiler lsb-release mosquitto-clients qemu-system-x86 mingw-w64
     cifs-utils nfs-common wpasupplicant rustscan python3-ldap
 )

@@ -179,7 +179,7 @@ passes them explicitly to Pi alongside `--no-skills`.
 
 The `research` group also installs SecLists wordlists at `/usr/share/seclists`
 and these required Kali packages, independently of skill discovery:
-`python3-certipy`, `impacket-scripts`, `python3-pwntools`, `python3-ropgadget`,
+`certipy-ad`, `impacket-scripts`, `python3-pwntools`, `python3-ropgadget`,
 `procyon-decompiler`, `lsb-release`, `mosquitto-clients`, `qemu-system-x86`,
 `mingw-w64`, `cifs-utils`, `nfs-common`, `wpasupplicant`, and `rustscan`.
 Dry runs list all required packages.
