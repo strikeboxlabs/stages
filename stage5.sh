@@ -25,8 +25,10 @@ Install optional tools and skills separately using install-tools.sh.
 
 The API runs as board; its database stays in /var/lib/board/.local/share/board.
 The dispatcher runs as --user and uses that account's existing Pi configuration.
-Creates /opt/board/dispatch.yaml if absent, with 5 total worker slots, 2 projects,
-3 workers per project, and up to 3 concurrent Pi sessions. Runs are stored in
+Prompts for the worker split (Pi everywhere, or Claude Code on Opus 4.6 for
+reasoning with Pi for exploration and bootstrap). Creates /opt/board/dispatch.yaml
+if absent, with 8 total worker slots, 2 projects,
+7 workers per project. Runs are stored in
 /data/cairn-runs. Pi transcripts are stored in each project's sessions/pi folder.
 Edit dispatch.yaml to customize these settings. Keep the stage helpers together.
 Reruns require the dispatcher to be stopped, preserve dispatch.yaml, the checkout,
@@ -74,7 +76,7 @@ if "$dry_run"; then
         "Would enable/start board.service on $bind_host:$port and check /projects." \
         "Would allow TCP $port through local IPv4 input firewall rules on every service start." \
         "Would run the local dispatcher as $target_user using that account's existing Pi configuration." \
-        'Would create /opt/board/dispatch.yaml only if absent (5 worker slots, 2 projects, 3 concurrent Pi sessions).' \
+        'Would create /opt/board/dispatch.yaml only if absent (8 worker slots, 2 projects, 7 workers per project; worker split prompted when interactive).' \
         'Would prepare the configured runs directory (default /data/cairn-runs) for shared API/dispatcher access.' \
         'Would check the worker CLI and enable/start board-dispatcher.service after the API is healthy.' \
         'Would preserve existing dispatch.yaml, code, credentials and data on reruns.' \
@@ -187,6 +189,36 @@ as_board /opt/board/board/.venv/bin/board serve --help >/dev/null
 
 step 'Configuring the local dispatcher'
 if [[ ! -e "$dispatch_config" ]]; then
+# Worker split prompt: single-model (Pi everywhere) or Claude Code for reasoning.
+worker_split=pi-only
+if [[ -t 0 ]]; then
+    printf 'Worker split for this server?\n'
+    printf '  1) Pi for everything (single model; default)\n'
+    printf '  2) Claude Code (Opus 4.6) for reasoning, Pi for exploration and bootstrap\n'
+    printf 'Choice [1]: '
+    read -r split_answer
+    case "$split_answer" in
+        2) worker_split=split ;;
+        *) : ;;
+    esac
+else
+    printf 'Note: non-interactive shell; defaulting to Pi for all task types. Edit workers: in dispatch.yaml to add a Claude Code reasoning worker.\n'
+fi
+pi_task_types="[bootstrap, reason, explore]"
+claude_worker_block=""
+if [[ "$worker_split" == split ]]; then
+    pi_task_types="[bootstrap, explore]"
+    claude_worker_block='
+  - name: "local-claude"
+    type: "claudecode"
+    task_types: [reason]
+    max_running: 2
+    priority: 0
+    env:
+      CLAUDE_MODEL: "claude-opus-4-6"
+'
+    printf 'Claude Code reasoning worker: run "claude" once as %s to authenticate before the first reason task.\n' "$target_user"
+fi
 cat > "$dispatch_config" <<EOF
 # Local workers reuse the selected user's installed CLIs and credentials.
 # Edit this file freely; stage5.sh preserves it on reruns.
@@ -195,9 +227,9 @@ server: "http://$health_host:$port"
 runtime:
   execution: local
   worker_healthcheck: disabled
-  max_workers: 5
+  max_workers: 8
   max_running_projects: 2
-  max_project_workers: 3
+  max_project_workers: 7
   interval: 3
   healthcheck_timeout: 15
   prompt_group: "default"
@@ -232,10 +264,10 @@ skills:
 workers:
   - name: "local-pi"
     type: "pi"
-    task_types: [bootstrap, reason, explore]
+    task_types: $pi_task_types
     max_running: 3
     priority: 0
-
+$claude_worker_block
   # - name: "local-codex"
   #   type: "codex"
   #   task_types: [explore]

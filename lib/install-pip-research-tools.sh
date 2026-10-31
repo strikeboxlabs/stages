@@ -97,7 +97,8 @@ else
     fi
 fi
 
-# --- 5. Go binaries (module roots; verify module path before adding)
+# --- 5. Go binaries (module roots; the Go toolchain, Java JRE and Ruby are
+# guaranteed by stage2.sh, not by the research resolver)
 go_tool() {  # go_tool <command> <module@version>
     local cmd=$1 module=$2
     if have "$cmd"; then skipped+=("$cmd"); return 0; fi

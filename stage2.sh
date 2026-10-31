@@ -12,7 +12,9 @@ Usage: sudo ./stage2.sh [--dry-run]
 
 Stage 2 draft: install basic development tools from the configured apt sources.
 Includes Git, curl, CA certificates, compiler/build tools, pkg-config, Python
-venvs, pipx, Node.js, npm, jq, ripgrep, unzip, and tmux.
+venvs, pipx, Node.js, npm, jq, ripgrep, unzip, tmux, and the Go, Java (JRE)
+and Ruby runtimes that later research tools install against (go install,
+jar wrappers, gem install).
 Safe to rerun after a partial failure.
 
   --dry-run  Print the package list without installing or changing anything.
@@ -34,6 +36,7 @@ esac
 packages=(
     git curl ca-certificates build-essential pkg-config
     python3 python3-venv pipx nodejs npm jq ripgrep unzip tmux
+    golang-go default-jre-headless ruby
 )
 if "$dry_run"; then
     printf '[stage2] Would install these packages using apt-get:\n'
@@ -56,7 +59,7 @@ for package in "${packages[@]}"; do
     status=$(dpkg-query -W -f='${Status}' "$package") || die "Could not inspect package: $package"
     [[ "$status" == 'install ok installed' ]] || die "Package is not fully installed: $package ($status)"
 done
-for tool in git curl cc c++ make pkg-config python3 pipx node npm jq rg unzip tmux; do
+for tool in git curl cc c++ make pkg-config python3 pipx node npm jq rg unzip tmux go java gem; do
     command -v "$tool" >/dev/null || die "Expected command is unavailable after installation: $tool"
 done
 printf '\nStage 2 complete. Basic development tools are installed.\n'
