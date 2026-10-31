@@ -103,6 +103,12 @@ selected account and its normal `~/.pi/agent` model/auth configuration.
 2. Run `sudo ./stage5.sh --user YOUR_ACCOUNT`. A fresh native Board setup stores
    sessions in `<project>/sessions/pi`, creates `dispatch.yaml`, and starts the
    local API and dispatcher. Skills start disabled until a library is registered.
+   With the Claude Code split, reason tasks run on Opus 4.6 pinned through the
+   worker env `ANTHROPIC_MODEL` (the CLI ignores `CLAUDE_MODEL`) with Claude
+   Code's refusal fallback disabled, so safeguard stops fail the task instead of
+   silently re-billing a different model. Stage 5 rejects a stale `CLAUDE_MODEL`
+   setting and, once Claude is authenticated, verifies the actually served model
+   with a one-shot canary on every rerun.
 3. Before adding/upgrading tools or libraries, finish active work and stop
    `board-dispatcher.service`. Run the optional `install-tools.sh` described below. It
    refuses to modify a host while its dispatcher is active and do not restart it.

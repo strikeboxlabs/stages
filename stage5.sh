@@ -28,7 +28,8 @@ The dispatcher runs as --user and uses that account's existing Pi configuration.
 Prompts for the worker split (Pi everywhere, or Claude Code on Opus 4.6 for
 reasoning with Pi for exploration and bootstrap). Creates /opt/board/dispatch.yaml
 if absent, with 8 total worker slots, 2 projects,
-7 workers per project. Runs are stored in
+7 workers per project. The Claude Code worker's model env is validated and,
+once authenticated, verified with a one-shot canary. Runs are stored in
 /data/cairn-runs. Pi transcripts are stored in each project's sessions/pi folder.
 Edit dispatch.yaml to customize these settings. Keep the stage helpers together.
 Reruns require the dispatcher to be stopped, preserve dispatch.yaml, the checkout,
@@ -77,6 +78,7 @@ if "$dry_run"; then
         "Would allow TCP $port through local IPv4 input firewall rules on every service start." \
         "Would run the local dispatcher as $target_user using that account's existing Pi configuration." \
         'Would create /opt/board/dispatch.yaml only if absent (8 worker slots, 2 projects, 7 workers per project; worker split prompted when interactive).' \
+        'Would validate the claudecode worker model env and, once Claude is authenticated, verify the served model with a one-shot canary.' \
         'Would prepare the configured runs directory (default /data/cairn-runs) for shared API/dispatcher access.' \
         'Would check the worker CLI and enable/start board-dispatcher.service after the API is healthy.' \
         'Would preserve existing dispatch.yaml, code, credentials and data on reruns.' \
@@ -284,6 +286,69 @@ EOF
 else
     printf 'Preserving existing %s.\n' "$dispatch_config"
 fi
+step 'Verifying the Claude Code worker model'
+# Catches env names the claude CLI ignores (CLAUDE_MODEL in 2.1.x) and model
+# drift before they silently re-bill different models during reason tasks.
+as_worker /opt/board/board/.venv/bin/python - "$dispatch_config" <<'PY'
+import json
+import os
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+from board.dispatcher.config import DispatchConfig
+
+config = DispatchConfig.load(Path(sys.argv[1]))
+worker = next((w for w in config.workers if w.type == 'claudecode'), None)
+if worker is None:
+    print('No claudecode worker configured; nothing to verify.')
+    sys.exit(0)
+if 'CLAUDE_MODEL' in worker.env:
+    sys.exit(f'Refusing the stale CLAUDE_MODEL setting for {worker.name}: the claude '
+             'CLI ignores it, so the worker would silently run the account default '
+             'model and double-bill on safeguard refusals. Set ANTHROPIC_MODEL instead.')
+expected = worker.env.get('ANTHROPIC_MODEL')
+if not expected:
+    print(f'Warning: {worker.name} sets no ANTHROPIC_MODEL; the account default model will be used.')
+    sys.exit(0)
+home = Path(os.environ['HOME'])
+if not (home / '.claude/.credentials.json').is_file():
+    print(f'Claude is not authenticated for {home} yet; after running "claude" once to '
+          'log in, rerun stage5.sh to verify the served model with a one-shot canary.')
+    sys.exit(0)
+with tempfile.TemporaryDirectory(prefix='stage5-claude-canary.') as work:
+    os.chmod(work, 0o755)
+    try:
+        subprocess.run(['claude', '-p', '--', 'Reply with the single word ok'],
+                       cwd=work, env={**os.environ, **worker.env}, timeout=120,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except subprocess.TimeoutExpired:
+        sys.exit('Claude canary timed out; check authentication and network, then rerun.')
+    # Claude Code encodes the cwd as a project dir: only alphanumerics and '-' survive.
+    project = ''.join(char if char.isalnum() or char == '-' else '-' for char in work)
+    sessions = sorted((home / '.claude' / 'projects' / project).glob('*.jsonl'))
+    if not sessions:
+        sys.exit('Claude canary produced no transcript; check claude authentication.')
+    requested, served = [], []
+    with sessions[-1].open(errors='replace') as handle:
+        for line in handle:
+            try:
+                entry = json.loads(line)
+            except ValueError:
+                continue
+            if entry.get('type') == 'api-request':
+                model = entry.get('params', {}).get('model')
+                if model and model not in requested:
+                    requested.append(model)
+            model = (entry.get('message') or {}).get('model')
+            if model and model not in served:
+                served.append(model)
+if any(model != expected for model in requested + served) or expected not in served:
+    sys.exit(f'Claude canary mismatch: expected {expected}, requested {requested}, '
+             f'served {served}. Pin a model id the installed claude CLI honors via ANTHROPIC_MODEL.')
+print(f'Claude canary verified: requested and served {expected}.')
+PY
 step 'Validating native Board skills and persistent sessions'
 /opt/board/board/.venv/bin/python "$script_dir/configure-board-sessions.py" \
     --board-root /opt/board --user "$target_user" --group "$board_group" --apply
