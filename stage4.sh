@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Stage 4: verify Pi configuration and enable SSH access for Hermes Desktop.
+# Stage 4: verify Pi configuration and add Hermes Desktop access to stage 1 SSH.
 set -Eeuo pipefail
 current_step='startup'
 trap 'rc=$?; printf "Error [stage4: %s]: line %s failed (exit %s).\n" "$current_step" "$LINENO" "$rc" >&2; exit "$rc"' ERR
@@ -10,7 +10,8 @@ Usage: ./stage4.sh [--user USER] [--dry-run]
 
 Verify Pi using its own model, endpoint, and API key saved by stage 3:
 Abliteration.ai Large v2, Z.ai GLM-5.3, or DeepSeek Flash (Max).
-Enable OpenSSH at boot for Hermes Desktop connections from another computer.
+Extend stage 1's SSH access with keys and forwarding checks for Hermes Desktop.
+Preserve stage 1's root password login for ordinary workstation SSH sessions.
 Allow TCP 22, 8642, 9119, and configured SSH ports through local IPv4 input firewall rules.
 After manually reloading a firewall, restart hermes-ssh-firewall.service.
 Run as root or via sudo. Defaults to the sudo-invoking user when present,
@@ -50,7 +51,7 @@ if "$dry_run"; then
         '[stage4] Would verify the independent Pi configuration and generate a workstation SSH key pair.' \
         "Target account: ${target_user:-not selected} (use --user if needed)." \
         "Would use Pi's saved selection: Abliteration.ai Large v2, Z.ai GLM-5.3, or DeepSeek Flash (Max)." \
-        'Would preserve existing agent configuration and SSH keys.' \
+        'Would preserve existing agent configuration, SSH keys and stage 1 root password login.' \
         'Would check the running Hermes backend and check/install openssh-server.' \
         'Would add the public key, generate missing SSH host keys, validate sshd, and enable/start SSH.' \
         'Would persistently allow TCP 22, 8642, 9119, and configured SSH ports through the local IPv4 input firewall.' \
@@ -67,7 +68,7 @@ done
 [[ -d /run/systemd/system ]] || die 'This stage requires a running systemd system to enable SSH.'
 target_home=$(getent passwd "$target_user" | cut -d: -f6)
 [[ -d "$target_home" ]] || die "Home directory does not exist: $target_home"
-for helper in configure-desktop.py model_providers.py; do
+for helper in configure-desktop.py model_providers.py configure-ssh-firewall.py; do
     [[ -f "$script_dir/$helper" ]] || die "Missing $helper; keep the stage helpers together."
 done
 init_hermes_runtime
@@ -112,66 +113,11 @@ install -d -m 0755 /usr/local/libexec
 firewall_helper=/usr/local/libexec/hermes-ssh-firewall
 firewall_unit=/etc/systemd/system/hermes-ssh-firewall.service
 for managed in "$firewall_helper" "$firewall_unit"; do
-    if [[ -e "$managed" ]] && ! grep -q '^# Managed by stage4.sh$' "$managed"; then
+    if [[ -e "$managed" ]] && ! grep -Eq '^# Managed by (stage4\.sh|stages SSH setup\.)$' "$managed"; then
         die "Refusing to overwrite unmanaged file: $managed"
     fi
 done
-cat > "$firewall_helper" <<'PY'
-#!/usr/bin/python3
-# Managed by stage4.sh
-import json
-import shlex
-import subprocess
-import sys
-
-
-def run(*args, **kwargs):
-    return subprocess.run(args, check=True, text=True, **kwargs)
-
-
-ports = sorted({22, 8642, 9119, *(int(value) for value in sys.argv[1:])})
-if not all(1 <= port <= 65535 for port in ports):
-    raise SystemExit('Invalid TCP port')
-# Retain the original tag so reruns replace rules from earlier stage versions.
-tag = 'stage4-ssh-port'
-ruleset = json.loads(run('/usr/sbin/nft', '-j', '-a', 'list', 'ruleset',
-                         capture_output=True).stdout)['nftables']
-commands = []
-# Accept in every IPv4 input base chain: an accept in one base chain does
-# not bypass a later base chain's drop policy. Never flush unrelated rules.
-for entry in ruleset:
-    rule = entry.get('rule', {})
-    if rule.get('comment') == tag and rule.get('family') in ('ip', 'inet'):
-        commands.append({'delete': {'rule': {key: rule[key] for key in
-                         ('family', 'table', 'chain', 'handle')}}})
-for entry in ruleset:
-    chain = entry.get('chain', {})
-    if chain.get('hook') != 'input' or chain.get('family') not in ('ip', 'inet'):
-        continue
-    rule = {key: chain[key] for key in ('family', 'table')}
-    rule.update(chain=chain['name'], comment=tag, expr=[
-        {'match': {'op': '==', 'left': {'meta': {'key': 'nfproto'}}, 'right': 'ipv4'}},
-        {'match': {'op': '==', 'left': {'payload': {'protocol': 'tcp', 'field': 'dport'}},
-                   'right': {'set': ports}}},
-        {'accept': None},
-    ])
-    commands.append({'insert': {'rule': rule}})
-if commands:
-    run('/usr/sbin/nft', '-j', '-f', '-', input=json.dumps({'nftables': commands}))
-
-# Legacy iptables can coexist with nftables. Remove only our own earlier
-# allowance (including a previous port), then insert the current allowance.
-legacy = '/usr/sbin/iptables-legacy'
-for line in run(legacy, '-w', '-S', 'INPUT', capture_output=True).stdout.splitlines():
-    args = shlex.split(line)
-    if '--comment' in args and args[args.index('--comment') + 1] == tag:
-        run(legacy, '-w', '-D', *args[1:])
-for port in ports:
-    run(legacy, '-w', '-I', 'INPUT', '1', '-p', 'tcp', '--dport', str(port),
-        '-m', 'comment', '--comment', tag, '-j', 'ACCEPT')
-print(f'[stage4] Local IPv4 input firewall allows SSH and Hermes TCP ports {ports}.')
-PY
-chmod 0755 "$firewall_helper"
+install -m 0755 "$script_dir/configure-ssh-firewall.py" "$firewall_helper"
 ssh_ports=$(awk '$1 == "port" { print $2 }' <<< "$ssh_effective" | sort -nu | tr '\n' ' ')
 cat > "$firewall_unit" <<EOF
 # Managed by stage4.sh
@@ -182,7 +128,7 @@ Before=ssh.service
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/libexec/hermes-ssh-firewall $ssh_ports
+ExecStart=/usr/local/libexec/hermes-ssh-firewall --hermes $ssh_ports
 RemainAfterExit=yes
 
 [Install]

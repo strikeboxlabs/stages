@@ -2,6 +2,38 @@
 
 Run stages in order as root or with sudo. Keep all scripts and helpers together.
 
+Stage 1 starts SSH before disk expansion, so the VMware/vSphere console is only
+needed for the initial setup. It enables **root password login**, preserves an
+existing root password, and prompts to set one if root is locked or passwordless.
+It generates missing SSH host keys, enables the server at boot, and persistently
+allows TCP 22 and any configured SSH ports through the local IPv4 firewall.
+No agent software or API keys are needed for this step.
+
+Run stage 1 in the VM console:
+
+```sh
+sudo ./stage1.sh
+```
+
+After stage 1 finishes, use the VM address it prints to connect from your
+workstation. Enter the root password, then continue in that SSH session where
+copy/paste is available:
+
+```sh
+ssh root@<VM-IP>
+cd /path/to/stages
+./stage2.sh
+./stage3.sh --user root
+./stage4.sh --user root
+```
+
+For a custom SSH port, use the `ssh -p PORT` command printed by stage 1.
+The VMware network and external firewalls must allow that port. Stage 1 reloads
+SSH on reruns without disconnecting existing sessions. It manages root password
+access in `/etc/ssh/sshd_config.d/00-stage1-root-login.conf`; other SSH policies
+remain in effect. After manually reloading the local firewall, restart
+`stages-ssh-firewall.service` (and `hermes-ssh-firewall.service` after stage 4).
+
 Stage 3 installs the CLIs and prompts independently for Hermes and Pi. For each
 agent, choose a model and enter its API key with hidden input:
 
@@ -37,8 +69,9 @@ backend health before reporting completion. The API key and config backups have
 owner-only permissions. Provider API access is not tested. Keep
 `model_providers.py` with the configuration helpers and stage scripts.
 
-Stage 4 verifies Pi's saved model offline and configures SSH access for Hermes
-Desktop. It preserves the independent model and key choices from stage 3.
+Stage 4 verifies Pi's saved model offline and adds the Hermes Desktop SSH key,
+checks forwarding, and allows the Hermes ports (8642 and 9119). It preserves
+stage 1's root password access and the independent model/key choices from stage 3.
 Use the same account for both stages (default: sudo-invoking user, or root when
 run directly as root):
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Stage 1: base OS settings and root filesystem expansion.
+# Stage 1: early SSH access, base OS settings and root filesystem expansion.
 # Missing dependencies are installed automatically using apt-get.
 set -Eeuo pipefail
 current_step='startup'
@@ -10,6 +10,12 @@ usage() {
     cat <<'EOF'
 Usage: sudo ./stage1.sh [--dry-run]
 
+First installs/enables OpenSSH and root password login for remote setup.
+Keeps the existing root password, or prompts to set one if locked/passwordless.
+Allows SSH ports through the local IPv4 firewall, persistently across reboots.
+Connect from your workstation after this stage, then run stages 2-4 over SSH.
+No agent software or API keys are needed for this initial access.
+
 Detects the root partition, checks disk capacity, and grows the partition
 and filesystem into all contiguous space following it. Supports ext2/3/4
 and XFS on a plain partition. LVM, encryption, and RAID are not supported.
@@ -19,7 +25,7 @@ Sets the persistent system keyboard layout to Danish, installs kali-root-login,
 and applies persistent inotify limits (512 instances, 524288 watches per user).
 Works headlessly; also runs setxkbmap dk when an X display is available.
 
-  --dry-run  Preview changes; skip disk writes and base configuration.
+  --dry-run  Preview changes; skip SSH setup, disk writes and base configuration.
   --help     Show this help.
 
 Missing dependencies are automatically installed using apt-get on Debian/Kali,
@@ -73,6 +79,15 @@ esac
 (( $# <= 1 )) || die 'Too many arguments.'
 (( EUID == 0 )) || die 'Run this script with sudo.'
 export PATH="$PATH:/usr/sbin:/sbin"
+script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+[[ -f "$script_dir/lib/ssh-bootstrap.sh" && -f "$script_dir/configure-ssh-firewall.py" ]] || \
+    die 'Missing SSH helpers; keep lib/ssh-bootstrap.sh and configure-ssh-firewall.py with stage1.sh.'
+step 'Enabling early SSH access'
+if "$dry_run"; then
+    bash "$script_dir/lib/ssh-bootstrap.sh" --dry-run
+else
+    bash "$script_dir/lib/ssh-bootstrap.sh"
+fi
 step 'Checking disk dependencies and root partition'
 ensure_commands findmnt util-linux lsblk util-linux readlink coreutils \
     blockdev util-linux growpart cloud-guest-utils sfdisk fdisk \
@@ -116,7 +131,7 @@ case "$status" in
         [[ "$proposal" == *NOCHANGE:* ]] || die 'Partition check failed.'
         can_grow=false
         ;;
-    *) die 'Partition check failed; no changes made.' ;;
+    *) die 'Partition check failed; no partition changes made.' ;;
 esac
 if "$dry_run"; then
     printf '\nDry run complete. A normal run also expands the filesystem to fill the partition.\n'
