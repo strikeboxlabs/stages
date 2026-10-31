@@ -32,7 +32,8 @@ HINTS = {
     'chromedriver': 'chromium-driver', 'docker': 'docker.io',
     'ebook-convert': 'calibre', 'exiftool': 'libimage-exiftool-perl',
     'gem': 'ruby', 'go': 'golang-go', 'grpc-tools-protoc': 'python3-grpc-tools',
-    'httpie': 'httpie', 'ip': 'iproute2', 'jwt-tool': 'jwt-tool',
+    'httpie': 'httpie', 'ip': 'iproute2', 'httpx': 'httpx-toolkit',
+    'jwt-tool': 'jwt-tool',
     'latex': 'texlive-latex-base', 'linpeas': 'peass', 'magick': 'imagemagick',
     'mdbtools': 'mdbtools', 'mingw-w64-gcc': 'gcc-mingw-w64',
     'mount-cifs': 'cifs-utils', 'mount-nfs': 'nfs-common',
@@ -44,7 +45,7 @@ HINTS = {
     'r2': 'radare2', 'rabin2': 'radare2', 'scapy': 'python3-scapy',
     'searchsploit': 'exploitdb', 'setuptools': 'python3-setuptools',
     'strongswan-ipsec': 'strongswan-starter', 'umask': 'bash',
-    'procyon': 'procyon-decompiler',
+    'procyon': 'procyon-decompiler', 'unicorn': 'python3-unicorn',
     'wpa-supplicant': 'wpasupplicant', 'xfreerdp': 'freerdp3-x11',
     'xml-pp': 'xml-twig-tools',
 }
@@ -55,6 +56,7 @@ ALIASES = {
     'mingw-w64-gcc': ['x86_64-w64-mingw32-gcc'], 'qemu-system-x86-64': ['qemu-system-x86_64'],
     'wpa-supplicant': ['wpa_supplicant'], 'xfreerdp': ['xfreerdp3'],
     'derby-ij': ['ij'], 'ipython': ['ipython3'], 'strongswan-ipsec': ['ipsec'],
+    'httpx': ['httpx-toolkit'],
 }
 TOKEN = re.compile(r'^[A-Za-z0-9][A-Za-z0-9_.+/-]*$')
 

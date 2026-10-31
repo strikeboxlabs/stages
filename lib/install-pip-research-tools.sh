@@ -97,15 +97,20 @@ else
     fi
 fi
 
-# --- 5. Go binary: kerbrute (module root, not cmd/kerbrute)
-if have kerbrute; then
-    skipped+=("kerbrute")
-elif have go; then
-    GOBIN=/usr/local/bin go install github.com/ropnop/kerbrute@latest \
-        && installed+=("kerbrute") || failed+=("kerbrute (go install)")
-else
-    failed+=("kerbrute (no Go toolchain)")
-fi
+# --- 5. Go binaries (module roots; verify module path before adding)
+go_tool() {  # go_tool <command> <module@version>
+    local cmd=$1 module=$2
+    if have "$cmd"; then skipped+=("$cmd"); return 0; fi
+    if have go; then
+        GOBIN=/usr/local/bin go install "$module" \
+            && installed+=("$cmd") || failed+=("$cmd (go install $module)")
+    else
+        failed+=("$cmd (no Go toolchain)")
+    fi
+}
+go_tool kerbrute github.com/ropnop/kerbrute@latest   # module root, not cmd/kerbrute
+go_tool gau github.com/lc/gau/v2/cmd/gau@latest
+go_tool waybackurls github.com/tomnomnom/waybackurls@latest
 
 # --- 6. npm: asar (Electron archive CLI)
 if have asar; then
@@ -136,7 +141,54 @@ else
     failed+=("ysoserial (no java/curl)")
 fi
 
-# --- 8. PATH fixups for APT packages that install tools off PATH
+# --- 8. Cloud/container tooling (pipx + upstream releases)
+pipx_tool scoutsuite scoutsuite
+if have scout && ! have scoutsuite; then
+    ln -sf "$(command -v scout)" /usr/local/bin/scoutsuite && installed+=("scoutsuite(cmd-symlink)") || failed+=("scoutsuite (symlink)")
+fi
+pipx_tool kube-hunter kube-hunter
+release_tool() {  # release_tool <command> <versioned-url>
+    local cmd=$1 url=$2
+    if have "$cmd"; then skipped+=("$cmd"); return 0; fi
+    if curl -fsSL --max-time 180 -o "/usr/local/bin/$cmd" "$url" && chmod 0755 "/usr/local/bin/$cmd" && have "$cmd"; then
+        installed+=("$cmd")
+    else
+        rm -f "/usr/local/bin/$cmd"; failed+=("$cmd (release download)")
+    fi
+}
+release_tool cdk https://github.com/cdk-team/CDK/releases/latest/download/cdk_linux_amd64
+release_tool kubeletctl https://github.com/cyberark/kubeletctl/releases/latest/download/kubeletctl_linux_amd64
+if have deepce; then
+    skipped+=("deepce")
+elif curl -fsSL --max-time 60 -o /usr/local/bin/deepce \
+    https://raw.githubusercontent.com/stealthcopter/deepce/master/deepce.sh \
+    && chmod 0755 /usr/local/bin/deepce; then
+    installed+=("deepce")
+else
+    rm -f /usr/local/bin/deepce; failed+=("deepce (download)")
+fi
+
+# --- 9. Injection/API/stego/symbolic tooling
+git_tool tplmap https://github.com/epinna/tplmap tplmap.py
+go_tool kiterunner github.com/assetnote/kiterunner/cmd/kiterunner@latest
+if have zsteg; then
+    skipped+=("zsteg")
+elif have gem; then
+    gem install zsteg -q >/dev/null 2>&1 && have zsteg && installed+=("zsteg") || failed+=("zsteg (gem)")
+else
+    failed+=("zsteg (no ruby)")
+fi
+# angr is a library: dedicated venv invoked by absolute interpreter path
+if /opt/tools/angr/.venv/bin/python -c 'import angr' >/dev/null 2>&1; then
+    skipped+=("angr(venv)")
+else
+    python3 -m venv /opt/tools/angr/.venv 2>/dev/null \
+        && /opt/tools/angr/.venv/bin/pip -q install angr unicorn >/dev/null 2>&1 \
+        && /opt/tools/angr/.venv/bin/python -c 'import angr' >/dev/null 2>&1 \
+        && installed+=("angr(venv)") || failed+=("angr (venv build)")
+fi
+
+# --- 10. PATH fixups for APT packages that install tools off PATH
 if have memcached-tool; then
     skipped+=("memcached-tool(path)")
 elif [[ -x /usr/share/memcached/scripts/memcached-tool ]]; then
