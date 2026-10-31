@@ -97,7 +97,7 @@ The API has its own `board` service account; the dispatcher and Pi workers use t
 selected account and its normal `~/.pi/agent` model/auth configuration.
 
 1. Run stages 1 and 2, then stage 3 and stage 4 with `--user YOUR_ACCOUNT`.
-   Stage 3 pins Pi **1.3.0** and requires Node.js **22.19.0 or newer**. The host's
+   Stage 3 installs Pi's latest release and requires Node.js **22.19.0 or newer**. The host's
    APT repositories supply Node; if they supply an older version, update that
    prerequisite before continuing. npm engine checks remain enabled.
 2. Run `sudo ./stage5.sh --user YOUR_ACCOUNT`. A fresh native Board setup stores
@@ -119,10 +119,11 @@ These checks are local and make no model requests. They verify configuration and
 resource access; they do not establish vulnerability-finding performance. Test
 first on a disposable host before relying on a production daemon upgrade.
 
-Stage 3 accepts an explicit future Pi upgrade through `--pi-version VERSION` or
-`PI_VERSION`; version ranges and `latest` are refused. Provider authentication
-behavior is unchanged. Before rerunning stages 3/5 or the optional tool installer, stop
-the dispatcher deliberately after active work has finished.
+Stage 3 installs Pi's latest release; `--pi-version VERSION` or `PI_VERSION` can
+pin an exact version. Ranges and `latest` are refused as explicit pin values.
+Provider authentication behavior is unchanged. Before rerunning stages 3/5 or the
+optional tool installer, stop the dispatcher deliberately after active work has
+finished.
 
 ## Upgrading older staged hosts
 

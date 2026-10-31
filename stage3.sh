@@ -29,12 +29,13 @@ and prepares SSH access for Hermes Desktop.
 Run stage2.sh first. Requires Node.js 22.19+, npm, curl, and network access.
 
   --user USER  Account for Hermes (use the same account in stage 4).
-  --pi-version VERSION  Exact Pi version (default: PI_VERSION or 1.3.0).
+  --pi-version VERSION  Pin Pi to an exact version (default: PI_VERSION or latest).
   --dry-run  Print installation commands without changing anything.
   --help     Show this help.
 
-Pi is pinned; upgrading it requires --pi-version or PI_VERSION. Other CLIs use
-the latest releases. Stop the Board dispatcher before modifying agents. Each CLI is
+Pi installs its latest release by default; use --pi-version or PI_VERSION to
+pin an exact version. Other CLIs use the latest releases. Stop the Board
+dispatcher before modifying agents. Each CLI is
 checked with --version; backend health is checked before completion. Codex
 and Claude authentication remain specific to those agents.
 EOF
@@ -45,7 +46,7 @@ script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 source "$script_dir/hermes-runtime.sh"
 target_user=${SUDO_USER:-$(id -un)}
 dry_run=false
-pi_version=${PI_VERSION:-1.3.0}
+pi_version=${PI_VERSION:-}
 while (( $# )); do
     case "$1" in
         --dry-run) dry_run=true; shift ;;
@@ -59,11 +60,11 @@ while (( $# )); do
 done
 [[ "$target_user" =~ ^[a-zA-Z0-9_][a-zA-Z0-9_.-]*\$?$ ]] || die 'Select a valid account with --user USER.'
 
-[[ "$pi_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.-]+)?$ ]] || die 'Pi requires an exact semantic version; latest and ranges are refused.'
+[[ -z "$pi_version" || "$pi_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.-]+)?$ ]] || die 'Pi requires an exact semantic version; latest and ranges are refused.'
 
 packages=(
     '@openai/codex@latest'
-    "@earendil-works/pi-coding-agent@$pi_version"
+    "@earendil-works/pi-coding-agent@${pi_version:-latest}"
     '@anthropic-ai/claude-code@latest'
 )
 commands=(codex pi claude)
@@ -165,7 +166,7 @@ for i in "${!packages[@]}"; do
     [[ -x "$cli_path" ]] || die "Installation completed but $cli_path is missing or not executable."
     cli_version=$("$cli_path" --version) || die "$cli_path could not start. Check the error above and rerun after fixing it."
     printf '%s\n' "$cli_version"
-    if [[ "$cli" == pi && "$cli_version" != "$pi_version" ]]; then
+    if [[ "$cli" == pi && -n "$pi_version" && "$cli_version" != "$pi_version" ]]; then
         die "Expected Pi $pi_version but $cli_path reports $cli_version. Resolve the installation before continuing."
     fi
 done

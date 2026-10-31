@@ -64,11 +64,11 @@ class PiInstallationPlan(unittest.TestCase):
         return subprocess.run(['bash', str(ROOT / 'stage3.sh'), '--dry-run', *args],
                               env=env, capture_output=True, text=True, timeout=10)
 
-    def test_default_is_the_supported_exact_pi_release(self):
+    def test_default_installs_the_latest_pi_release(self):
         result = self.plan()
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn('@earendil-works/pi-coding-agent@1.3.0', result.stdout)
-        self.assertNotIn('@earendil-works/pi-coding-agent@latest', result.stdout)
+        self.assertIn('@earendil-works/pi-coding-agent@latest', result.stdout)
+        self.assertNotIn('@earendil-works/pi-coding-agent@1.3.0', result.stdout)
         self.assertIn('22.19+', result.stdout)
 
     def test_explicit_version_overrides_environment_default(self):
