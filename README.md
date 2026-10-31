@@ -144,7 +144,13 @@ model capacity limit. Board resolves selected package directories per worker and
 passes them explicitly to Pi alongside `--no-skills`.
 
 The `research` group also installs SecLists wordlists at `/usr/share/seclists`
-and tools available as Kali packages.
+and these required Kali packages, independently of skill discovery:
+`python3-certipy`, `impacket-scripts`, `python3-pwntools`, `python3-ropgadget`,
+`procyon-decompiler`, `lsb-release`, `mosquitto-clients`, `qemu-system-x86`,
+`mingw-w64`, `cifs-utils`, `nfs-common`, `wpasupplicant`, and `rustscan`.
+Dry runs list all required packages.
+
+Additional tools are resolved from the research library:
 `kali-research-packages.py` maps skill entrypoints and shell command examples to
 the current Kali package/Contents indexes, including known command/package aliases.
 It saves a deduplicated plan and deferred skill list in

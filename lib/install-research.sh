@@ -20,7 +20,8 @@ absent, installs agent links only; rerun after Board is installed.
 The public install-tools.sh entry point manages dispatcher stop and restoration.
 
 This extracts the research-library provisioning from stages 3 and 5. It installs
-skills plus SecLists wordlists and tools available as Kali packages.
+skills plus SecLists wordlists, required research utilities and tools available
+as Kali packages.
 Tools without a resolvable Kali package are listed for later; no source builds
 or alternate package managers are used. Requires Kali with APT Contents indexes.
 Starting the dispatcher later can resume its existing active projects.
@@ -42,6 +43,13 @@ id "$target_user" >/dev/null 2>&1 || die "Unknown account: $target_user"
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 target_home=$(getent passwd "$target_user" | cut -d: -f6)
 hermes_home=${HERMES_HOME:-$target_home/.hermes}
+# Install these even when the skill library does not reference their commands.
+required_packages=(
+    git python3 python3-apt apt-file ca-certificates util-linux seclists
+    python3-certipy impacket-scripts python3-pwntools python3-ropgadget
+    procyon-decompiler lsb-release mosquitto-clients qemu-system-x86 mingw-w64
+    cifs-utils nfs-common wpasupplicant rustscan
+)
 for helper in configure-research-skills.py configure-board-skills.py board_config.py kali-research-packages.py; do
     [[ -f "$script_dir/$helper" ]] || die "Missing $helper; keep helpers together."
 done
@@ -62,7 +70,8 @@ if [[ -e "$board_adapter" ]]; then
 fi
 python3 "$script_dir/configure-research-skills.py" --user "$target_user" --hermes-home "$hermes_home"
 if "$dry_run"; then
-    printf 'Would install git, Python, CA certificates and SecLists wordlists (/usr/share/seclists), then clone/reuse /opt/research-library and link Hermes and Pi skills for %s.\n' "$target_user"
+    printf 'Would install required Kali packages: %s\n' "${required_packages[*]}"
+    printf 'SecLists wordlists go in /usr/share/seclists; would then clone/reuse /opt/research-library and link Hermes and Pi skills for %s.\n' "$target_user"
     if [[ -d /opt/research-library/skills ]]; then
         /usr/bin/python3 "$script_dir/kali-research-packages.py"
     else
@@ -79,7 +88,7 @@ fi
 if ! "$dry_run"; then
     (( EUID == 0 )) || die 'Run as root or with sudo.'
     apt-get update
-    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends git python3 python3-apt apt-file ca-certificates util-linux seclists
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${required_packages[@]}"
     apt-file update
 fi
 python3 "$script_dir/configure-research-skills.py" --user "$target_user" --hermes-home "$hermes_home" --apply
