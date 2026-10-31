@@ -44,6 +44,7 @@ HINTS = {
     'r2': 'radare2', 'rabin2': 'radare2', 'scapy': 'python3-scapy',
     'searchsploit': 'exploitdb', 'setuptools': 'python3-setuptools',
     'strongswan-ipsec': 'strongswan-starter', 'umask': 'bash',
+    'procyon': 'procyon-decompiler',
     'wpa-supplicant': 'wpasupplicant', 'xfreerdp': 'freerdp3-x11',
     'xml-pp': 'xml-twig-tools',
 }
@@ -53,6 +54,7 @@ ALIASES = {
     'mount-nfs': ['mount.nfs'], 'lsb-release': ['lsb_release'],
     'mingw-w64-gcc': ['x86_64-w64-mingw32-gcc'], 'qemu-system-x86-64': ['qemu-system-x86_64'],
     'wpa-supplicant': ['wpa_supplicant'], 'xfreerdp': ['xfreerdp3'],
+    'derby-ij': ['ij'], 'ipython': ['ipython3'], 'strongswan-ipsec': ['ipsec'],
 }
 TOKEN = re.compile(r'^[A-Za-z0-9][A-Za-z0-9_.+/-]*$')
 

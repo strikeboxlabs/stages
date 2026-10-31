@@ -48,7 +48,7 @@ required_packages=(
     git python3 python3-apt apt-file ca-certificates util-linux seclists
     python3-certipy impacket-scripts python3-pwntools python3-ropgadget
     procyon-decompiler lsb-release mosquitto-clients qemu-system-x86 mingw-w64
-    cifs-utils nfs-common wpasupplicant rustscan
+    cifs-utils nfs-common wpasupplicant rustscan python3-ldap
 )
 for helper in configure-research-skills.py configure-board-skills.py board_config.py kali-research-packages.py; do
     [[ -f "$script_dir/$helper" ]] || die "Missing $helper; keep helpers together."
@@ -109,6 +109,8 @@ for package in "${packages[@]}"; do
     [[ $(dpkg-query -W -f='${Status}' "$package") == 'install ok installed' ]] || die "Package verification failed: $package"
 done
 /usr/bin/python3 -c 'import json; p=json.load(open("/var/lib/stages/offensive-packages.json")); print("Deferred skill tools without a resolved Kali package:\n" + "\n".join(p["deferred"]))'
+printf '\nProvisioning deferred skill tools via pipx / upstream sources...\n'
+bash "$script_dir/lib/install-pip-research-tools.sh"
 if "$board_present"; then
     dispatcher_group=$(id -gn "$target_user")
     if [[ -d /run/systemd/system ]]; then
